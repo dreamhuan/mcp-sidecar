@@ -30,49 +30,43 @@ export function FileSearch({
   loading: parentLoading,
   ref,
 }: FileSearchProps) {
-  // 内部状态
   const [inputValue, setInputValue] = useState("");
   const [suggestions, setSuggestions] = useState<FileEntry[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-
-  // 键盘导航状态：-1 表示未选中
   const [selectedIndex, setSelectedIndex] = useState(-1);
 
-  // Refs
   const containerRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<HTMLDivElement>(null); // 用于控制滚动的 Ref
+  const listRef = useRef<HTMLDivElement>(null);
 
-  // 暴露给父组件的方法 (React 19)
+  // 🔥 新增：防止选中后重复搜索的锁
+  const shouldSearchRef = useRef(true);
+
   useImperativeHandle(ref, () => ({
     getValue: () => inputValue,
-    setValue: (val: string) => setInputValue(val),
+    setValue: (val: string) => {
+      shouldSearchRef.current = false; // 外部设置值时不触发搜索
+      setInputValue(val);
+    },
   }));
 
-  // 1. 监听选中项变化，自动滚动 (Scroll into view)
   useEffect(() => {
     if (showDropdown && listRef.current && selectedIndex >= 0) {
-      // listRef 绑定在带滚动条的外层 div 上
-      // 它的第一个子元素是那个 py-1 的 div (flex container)
       const buttonsContainer = listRef.current.firstElementChild;
-
       if (buttonsContainer && buttonsContainer.children[selectedIndex]) {
         const targetBtn = buttonsContainer.children[
           selectedIndex
         ] as HTMLElement;
-        // block: 'nearest' 智能滚动：只有当元素在视野外时才滚动
         targetBtn.scrollIntoView({ block: "nearest" });
       }
     }
   }, [selectedIndex, showDropdown]);
 
-  // 当建议列表变化时，重置选中项并回滚到顶部
   useEffect(() => {
     setSelectedIndex(-1);
     if (listRef.current) listRef.current.scrollTop = 0;
   }, [suggestions]);
 
-  // 点击外部关闭下拉
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
@@ -86,8 +80,14 @@ export function FileSearch({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // 核心搜索逻辑
+  // 🔥 核心修改：搜索逻辑增加锁判断
   useEffect(() => {
+    // 如果是因为选中条目导致的 value 变化，跳过搜索并重置锁
+    if (!shouldSearchRef.current) {
+      shouldSearchRef.current = true;
+      return;
+    }
+
     if (!inputValue) {
       setSuggestions([]);
       return;
@@ -128,13 +128,13 @@ export function FileSearch({
               f.name.toLowerCase().includes(filterTerm.toLowerCase()),
             )
             .sort((a, b) => {
-              // 文件夹排在前面
               if (a.isDirectory === b.isDirectory)
                 return a.name.localeCompare(b.name);
               return a.isDirectory ? -1 : 1;
             });
 
           setSuggestions(filtered);
+          // 只有真正搜到结果且由用户输入触发时才显示
           if (filtered.length > 0) setShowDropdown(true);
         }
       } catch (e) {
@@ -151,28 +151,24 @@ export function FileSearch({
     return () => clearTimeout(timer);
   }, [inputValue]);
 
-  // 处理选中逻辑 (isExecution = 是否立即执行)
   const handleItemAction = (item: FileEntry, isExecution: boolean) => {
     const lastSlashIndex = inputValue.lastIndexOf("/");
     const prefix =
       lastSlashIndex !== -1 ? inputValue.substring(0, lastSlashIndex + 1) : "";
-
-    // 如果是目录，强制加上 /
     const suffix = item.name + (item.isDirectory ? "/" : "");
     const fullPath = prefix + suffix;
 
+    // 🔥 标记：这是选中行为，不要触发下一次 Effect 的搜索
+    shouldSearchRef.current = false;
     setInputValue(fullPath);
 
-    // Enter 或 点击 时执行，Tab 仅补全
     if (isExecution) {
       setShowDropdown(false);
       onSelect(fullPath);
     }
   };
 
-  // 键盘事件处理
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // 只有下拉框显示时才响应
     if (showDropdown && suggestions.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -188,7 +184,6 @@ export function FileSearch({
       }
       if (e.key === "Tab") {
         e.preventDefault();
-        // Tab 键：仅补全路径，不执行
         const targetIndex = selectedIndex >= 0 ? selectedIndex : 0;
         if (suggestions[targetIndex]) {
           handleItemAction(suggestions[targetIndex], false);
@@ -197,15 +192,12 @@ export function FileSearch({
       }
     }
 
-    // Enter 键
     if (e.key === "Enter") {
       e.preventDefault();
 
       if (showDropdown && selectedIndex >= 0) {
-        // 如果有选中项，执行选中项逻辑
         handleItemAction(suggestions[selectedIndex], true);
       } else {
-        // 否则执行输入框当前内容
         setShowDropdown(false);
         onSelect(inputValue);
       }
@@ -254,7 +246,7 @@ export function FileSearch({
 
       {showDropdown && suggestions.length > 0 && (
         <div
-          ref={listRef} // 绑定滚动容器
+          ref={listRef}
           className="absolute top-full left-0 right-0 mt-2 bg-white/90 backdrop-blur-xl border border-white/40 shadow-xl rounded-[16px] overflow-hidden max-h-64 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200 scrollbar-hide"
         >
           <div className="py-1">
@@ -264,12 +256,10 @@ export function FileSearch({
                 onClick={() => handleItemAction(item, true)}
                 className={cn(
                   "w-full text-left px-4 py-2.5 flex items-center gap-3 transition-colors group",
-                  // 选中态样式 (高亮)
                   idx === selectedIndex
                     ? "bg-blue-100/80"
                     : "hover:bg-blue-50/50",
                 )}
-                // 鼠标划过时也更新索引，防止键盘鼠标打架
                 onMouseEnter={() => setSelectedIndex(idx)}
               >
                 <div

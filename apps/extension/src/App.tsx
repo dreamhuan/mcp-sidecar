@@ -3,58 +3,64 @@ import {
   Terminal,
   GitBranch,
   FileText,
-  Loader2,
-  Copy,
+  BookTemplate,
   CheckCircle2,
   AlertCircle,
 } from "lucide-react";
 import * as Toast from "@radix-ui/react-toast";
 import { cn } from "./lib/utils";
 import { FileSearch, type FileSearchRef } from "./components/FileSearch";
+import { PromptManager } from "./components/PromptManager";
+import { ResultPreview } from "./components/ResultPreview";
+import { QuickActions } from "./components/QuickActions";
+import { ActionItem, PromptTemplate, ToastType } from "./types";
 
-// --- 配置区域 ---
-const ACTIONS = [
+// 配置
+const ACTIONS: ActionItem[] = [
   {
     id: "git-diff",
     label: "Git Diff",
     server: "git",
     tool: "diff",
-    promptPrefix: "请分析以下代码变更并检查潜在Bug：\n\n",
+    promptPrefix:
+      "Please analyze the following code changes and check for potential bugs:\n\n",
     icon: <GitBranch className="w-6 h-6 text-blue-500" />,
-    desc: "查看未提交变更",
+    desc: "View uncommitted changes",
   },
   {
     id: "ls",
     label: "List Files",
     server: "fs",
     tool: "list_directory",
-    args: { path: "." }, // 默认参数，实际执行时会被 Search 输入框覆盖
-    promptPrefix: "这是我当前的项目结构：\n\n",
+    args: { path: "." },
+    promptPrefix: "Here is my current project structure:\n\n",
     icon: <FileText className="w-6 h-6 text-indigo-500" />,
-    desc: "查看目录结构",
+    desc: "View directory structure",
   },
 ];
 
 function App() {
   const [loading, setLoading] = useState(false);
   const [resultPreview, setResultPreview] = useState("");
-
-  // 引用 Search 组件，用于获取当前输入框的值
   const searchRef = useRef<FileSearchRef>(null);
+
+  // 提示词状态
+  const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
+  const [isPromptMgrOpen, setIsPromptMgrOpen] = useState(false);
 
   // Toast 状态
   const [open, setOpen] = useState(false);
   const [toastConfig, setToastConfig] = useState({
     title: "",
     desc: "",
-    type: "success",
+    type: "success" as ToastType,
   });
   const timerRef = useRef<number>(0);
 
   const showToast = (
     title: string,
     desc: string,
-    type: "success" | "error" = "success",
+    type: ToastType = "success",
   ) => {
     setOpen(false);
     window.clearTimeout(timerRef.current);
@@ -66,6 +72,23 @@ function App() {
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
+  // 本地存储加载/保存
+  useEffect(() => {
+    const saved = localStorage.getItem("mcp-prompts");
+    if (saved) {
+      try {
+        setPrompts(JSON.parse(saved));
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("mcp-prompts", JSON.stringify(prompts));
+  }, [prompts]);
+
+  // 执行核心逻辑
   const handleRun = async (
     serverName: string,
     toolName: string,
@@ -86,8 +109,7 @@ function App() {
 
       if (json.success) {
         let contentStr = "";
-
-        // 🟢 针对文件列表的特殊格式化：纯文本风格
+        // 格式化目录列表
         if (
           Array.isArray(json.data) &&
           json.data.length > 0 &&
@@ -95,34 +117,49 @@ function App() {
         ) {
           const dirs = json.data.filter((item: any) => item.isDirectory);
           const files = json.data.filter((item: any) => !item.isDirectory);
-
-          // 文件夹加 / 后缀
-          const dirLines = dirs.map((d: any) => `${d.name}/`);
-          const fileLines = files.map((f: any) => f.name);
-
-          contentStr = [...dirLines, ...fileLines].join("\n");
-        }
-        // 普通 JSON 对象 (转字符串)
-        else if (typeof json.data === "object") {
+          contentStr = [
+            ...dirs.map((d: any) => `${d.name}/`),
+            ...files.map((f: any) => f.name),
+          ].join("\n");
+        } else if (typeof json.data === "object") {
           contentStr = JSON.stringify(json.data, null, 2);
-        }
-        // 普通文本
-        else {
+        } else {
           contentStr = json.data;
         }
 
-        const finalContent = `${promptPrefix}\`\`\`\n${contentStr}\n\`\`\``;
-        await navigator.clipboard.writeText(finalContent);
-        showToast("已复制", "内容已复制到剪贴板", "success");
         setResultPreview(contentStr);
+        showToast(
+          "Execution Successful",
+          "Result ready, please copy manually",
+          "success",
+        );
       } else {
-        showToast("执行失败", json.error || "未知错误", "error");
+        showToast("Execution Failed", json.error || "Unknown error", "error");
       }
     } catch (e) {
-      showToast("连接失败", "请检查本地服务 (Port 8080)", "error");
+      showToast(
+        "Connection Failed",
+        "Please check local service (Port 8080)",
+        "error",
+      );
     } finally {
       setLoading(false);
     }
+  };
+
+  // 处理 QuickAction 点击
+  const handleActionClick = (act: ActionItem) => {
+    let args = act.args || {};
+    let promptPrefix = act.promptPrefix;
+
+    if (act.id === "ls") {
+      const currentInput = searchRef.current?.getValue() || "";
+      const targetPath = currentInput || ".";
+      args = { path: targetPath };
+      promptPrefix = `Structure of directory ${targetPath}:\n\n`;
+    }
+
+    handleRun(act.server, act.tool, args, promptPrefix);
   };
 
   return (
@@ -133,7 +170,7 @@ function App() {
         <div className="absolute bottom-[-20%] right-[-20%] w-[500px] h-[500px] bg-purple-200/30 rounded-full blur-[100px] opacity-70"></div>
       </div>
 
-      <div className="min-h-screen flex flex-col p-5 gap-6 font-sans">
+      <div className="min-h-screen flex flex-col p-5 gap-6 font-sans relative">
         {/* Header */}
         <header className="flex items-center justify-between pt-2 px-1">
           <div className="flex items-center gap-3">
@@ -152,146 +189,71 @@ function App() {
               </div>
             </div>
           </div>
+
+          <button
+            onClick={() => setIsPromptMgrOpen(true)}
+            className="p-2 rounded-lg hover:bg-white/50 active:scale-95 transition-all text-slate-600 border border-transparent hover:border-black/5 hover:shadow-sm"
+            title="Manage Prompt Templates"
+          >
+            <BookTemplate className="w-5 h-5" />
+          </button>
         </header>
 
-        {/* Quick Actions Grid */}
-        <section>
-          <h2 className="text-[13px] font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1">
-            Quick Actions
-          </h2>
-          <div className="grid grid-cols-2 gap-4">
-            {ACTIONS.map((act) => (
-              <button
-                key={act.id}
-                onClick={() => {
-                  let args = act.args || {};
-                  let promptPrefix = act.promptPrefix;
+        {/* 快捷动作 */}
+        <QuickActions
+          actions={ACTIONS}
+          loading={loading}
+          onRun={handleActionClick}
+          getDynamicDesc={(id) => {
+            if (id === "ls") {
+              // 尝试获取当前输入框的值，如果获取不到则回退
+              const val = searchRef.current?.getValue();
+              return val ? val : "View root files";
+            }
+            return "";
+          }}
+        />
 
-                  // 🔥 联动逻辑：点击 List Files 时，读取输入框的路径
-                  if (act.id === "ls") {
-                    const currentInput = searchRef.current?.getValue() || "";
-                    const targetPath = currentInput || ".";
-
-                    args = { path: targetPath };
-                    promptPrefix = `目录 ${targetPath} 的结构：\n\n`;
-                  }
-
-                  handleRun(act.server, act.tool, args, promptPrefix);
-                }}
-                disabled={loading}
-                className="group relative flex flex-col items-start p-4 h-32 rounded-[20px] text-left glass-button transition-all duration-200 active:scale-[0.98]"
-              >
-                <div className="mb-auto w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm border border-slate-100/50 group-hover:scale-110 transition-transform">
-                  {loading ? (
-                    <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
-                  ) : (
-                    act.icon
-                  )}
-                </div>
-                <div className="z-10 mt-3">
-                  <span className="block font-bold text-slate-800 text-[15px] mb-0.5 leading-tight">
-                    {act.label}
-                  </span>
-                  <span className="block text-[12px] text-slate-500 font-medium leading-tight opacity-80">
-                    {act.desc}
-                  </span>
-                </div>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        {/* File Reader (带搜索和自动补全) */}
+        {/* 文件阅读器 */}
         <section>
           <h2 className="text-[13px] font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1">
             File Reader
           </h2>
-
           <FileSearch
             ref={searchRef}
             loading={loading}
-            // 🔥 核心修改：根据路径是否以 / 结尾，决定是列出目录还是读取文件
             onSelect={(path) => {
-              if (path.endsWith("/") || path === "." || path === "..") {
-                // 如果是目录 -> 执行 List Files
-                handleRun(
-                  "fs",
-                  "list_directory",
-                  { path },
-                  `目录 ${path} 的结构：\n\n`,
-                );
-              } else {
-                // 如果是文件 -> 执行 Read File
-                handleRun(
-                  "fs",
-                  "read_file",
-                  { path },
-                  `文件 ${path} 内容：\n\n`,
-                );
-              }
+              const isDir = path.endsWith("/") || path === "." || path === "..";
+              handleRun(
+                "fs",
+                isDir ? "list_directory" : "read_file",
+                { path },
+                isDir
+                  ? `Structure of directory ${path}:\n\n`
+                  : `Content of file ${path}:\n\n`,
+              );
             }}
           />
         </section>
 
-        {/* Result Preview (Terminal Style) */}
-        {resultPreview && (
-          <section className="animate-in fade-in slide-in-from-bottom-6 duration-500 ease-out pb-6">
-            <div className="flex items-center justify-between px-1 mb-2">
-              <h2 className="text-[13px] font-semibold text-slate-400 uppercase tracking-wider">
-                Preview
-              </h2>
+        {/* 结果预览 */}
+        <ResultPreview
+          content={resultPreview}
+          prompts={prompts}
+          showToast={showToast}
+        />
 
-              {/* 独立的复制按钮 */}
-              <button
-                onClick={async () => {
-                  await navigator.clipboard.writeText(resultPreview);
-                  showToast("已复制", "内容已手动复制到剪贴板", "success");
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/50 hover:bg-white border border-black/5 text-[11px] font-medium text-slate-600 transition-all active:scale-95 shadow-sm hover:shadow-md cursor-pointer"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                Copy Content
-              </button>
-            </div>
-
-            {/* macOS Terminal Window */}
-            <div className="bg-[#1e1e1e] rounded-[16px] shadow-2xl border border-white/10 overflow-hidden font-mono text-[12px]">
-              {/* Window Title Bar */}
-              <div className="bg-[#2d2d2d] px-4 py-2.5 flex items-center gap-2 border-b border-white/5">
-                <div className="flex gap-1.5">
-                  <div className="w-3 h-3 rounded-full bg-[#ff5f56] border border-[#e0443e]"></div>
-                  <div className="w-3 h-3 rounded-full bg-[#ffbd2e] border border-[#dea123]"></div>
-                  <div className="w-3 h-3 rounded-full bg-[#27c93f] border border-[#1aab29]"></div>
-                </div>
-                <div className="flex-1 text-center text-slate-400 text-[10px] font-medium ml-[-46px]">
-                  bash — output
-                </div>
-              </div>
-
-              {/* Content */}
-              <div className="p-4 text-slate-300 max-h-80 overflow-y-auto scrollbar-hide leading-relaxed selection:bg-blue-500/30">
-                <div className="flex gap-2">
-                  <span className="text-emerald-400">➜</span>
-                  <span className="text-blue-400">~</span>
-                  <span className="text-slate-400">cat output.txt</span>
-                </div>
-
-                <div className="mt-3 text-slate-200 whitespace-pre-wrap break-all opacity-90 font-mono">
-                  {resultPreview}
-                </div>
-
-                <div className="mt-2 flex items-center gap-1">
-                  <span className="text-emerald-400">➜</span>
-                  <span className="text-blue-400">~</span>
-                  <span className="animate-pulse w-2 h-4 bg-slate-500 block"></span>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
+        {/* 提示词管理弹窗 */}
+        <PromptManager
+          isOpen={isPromptMgrOpen}
+          onClose={() => setIsPromptMgrOpen(false)}
+          prompts={prompts}
+          setPrompts={setPrompts}
+          showToast={showToast}
+        />
       </div>
 
-      {/* Modern Toast Notification */}
+      {/* 全局通知 */}
       <Toast.Root
         open={open}
         onOpenChange={setOpen}
@@ -303,7 +265,6 @@ function App() {
         )}
       >
         <div className="flex items-start gap-3.5">
-          {/* 固定宽高防止挤压 */}
           <div
             className={cn(
               "w-8 h-8 flex items-center justify-center rounded-full shrink-0 shadow-sm border border-black/5",
