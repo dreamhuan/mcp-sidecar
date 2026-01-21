@@ -5,7 +5,7 @@ import {
   useImperativeHandle,
   type Ref,
 } from "react";
-import { Search, Folder, FileCode, Loader2, Command } from "lucide-react";
+import { Search, Folder, FileCode, Loader2 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { API_BASE_URL } from "../common";
 
@@ -159,8 +159,13 @@ export function FileSearch({
     const suffix = item.name + (item.isDirectory ? "/" : "");
     const fullPath = prefix + suffix;
 
-    // 🔥 标记：这是选中行为，不要触发下一次 Effect 的搜索
-    shouldSearchRef.current = false;
+    // 🔥 修复关键点：
+    // 只有在 "确认选择/执行" (Enter/Click) 时才锁住搜索，防止下拉框再次弹出。
+    // 如果是 "Tab 补全" (isExecution=false)，我们希望搜索继续触发，以便显示下一级目录内容。
+    if (isExecution) {
+      shouldSearchRef.current = false;
+    }
+
     setInputValue(fullPath);
 
     if (isExecution) {
@@ -240,7 +245,7 @@ export function FileSearch({
           {parentLoading ? (
             <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
           ) : (
-            <Command className="w-4 h-4 text-slate-600" />
+            <span className="w-4 h-4 text-slate-600">↵</span>
           )}
         </button>
       </div>

@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from "react";
 import {
   Terminal,
   GitBranch,
-  FileText,
   BookTemplate,
   CheckCircle2,
   AlertCircle,
@@ -17,7 +16,7 @@ import { CommandBar } from "./components/CommandBar";
 import { ActionItem, PromptTemplate, ToastType } from "./types";
 import { API_BASE_URL } from "./common";
 
-// 配置：所有文本已转为英文
+// 配置：移除 "List Files"，只保留 Git Diff
 const ACTIONS: ActionItem[] = [
   {
     id: "git-diff",
@@ -28,16 +27,6 @@ const ACTIONS: ActionItem[] = [
       "Please analyze the following code changes and check for potential bugs:\n\n",
     icon: <GitBranch className="w-6 h-6 text-blue-500" />,
     desc: "View uncommitted changes",
-  },
-  {
-    id: "ls",
-    label: "List Files",
-    server: "fs",
-    tool: "list_directory",
-    args: { path: "." },
-    promptPrefix: "Here is my current project structure:\n\n",
-    icon: <FileText className="w-6 h-6 text-indigo-500" />,
-    desc: "View directory structure",
   },
 ];
 
@@ -90,7 +79,7 @@ function App() {
     localStorage.setItem("mcp-prompts", JSON.stringify(prompts));
   }, [prompts]);
 
-  // 🔥 核心执行逻辑：支持常规调用和原始指令调用
+  // 🔥 核心执行逻辑
   const handleRun = async (
     serverName: string | null,
     toolName: string | null,
@@ -117,7 +106,6 @@ function App() {
       if (json.success) {
         let contentStr = "";
 
-        // 1. 🔥 格式化工具列表 (mcp:list) - 增加参数详情显示
         if (json.isToolList && Array.isArray(json.data)) {
           const grouped: Record<string, any[]> = {};
           json.data.forEach((t: any) => {
@@ -133,12 +121,10 @@ function App() {
             tools.forEach((t: any) => {
               lines.push(`  ├─ 🛠️  ${t.name}`);
 
-              // 1. 描述
               if (t.description) {
                 lines.push(`  │   Description: ${t.description}`);
               }
 
-              // 2. 参数 Schema 解析
               const props = t.inputSchema?.properties || {};
               const required = t.inputSchema?.required || [];
               const propKeys = Object.keys(props);
@@ -146,34 +132,28 @@ function App() {
               if (propKeys.length > 0) {
                 lines.push(`  │   Args:`);
                 propKeys.forEach((key, idx) => {
-                  const isLast = idx === propKeys.length - 1;
                   const p = props[key];
                   const reqMark = required.includes(key)
                     ? "(Required)"
                     : "(Optional)";
                   const desc = p.description ? ` - ${p.description}` : "";
-
-                  // 格式: └─ key (type) (Required) - description
-                  lines.push(`  │     └─ ${key} [${p.type}] ${reqMark}${desc}`);
+                  lines.push(
+                    `  │      └─ ${key} [${p.type}] ${reqMark}${desc}`,
+                  );
                 });
               } else {
                 lines.push(`  │   Args: (None)`);
               }
-
-              // 增加一点间距
               lines.push(`  │`);
             });
             lines.push("");
           }
           contentStr = lines.join("\n");
-        }
-        // ... (其他 else if 逻辑保持不变: 目录列表, JSON, 文本)
-        else if (
+        } else if (
           Array.isArray(json.data) &&
           json.data.length > 0 &&
           "isDirectory" in json.data[0]
         ) {
-          // ...
           const dirs = json.data.filter((item: any) => item.isDirectory);
           const files = json.data.filter((item: any) => !item.isDirectory);
           contentStr = [
@@ -186,11 +166,24 @@ function App() {
           contentStr = String(json.data);
         }
 
-        // 全局替换反引号
         contentStr = contentStr.replace(/`/g, "'");
 
-        setResultPreview(contentStr);
-        showToast("Execution Successful", "Command executed", "success");
+        const finalResult = promptPrefix
+          ? `${promptPrefix}${contentStr}`
+          : contentStr;
+
+        setResultPreview(finalResult);
+
+        try {
+          await navigator.clipboard.writeText(finalResult);
+          showToast(
+            "Copied & Executed",
+            "Result copied to clipboard automatically",
+            "success",
+          );
+        } catch (err) {
+          showToast("Executed", "Result displayed (Copy failed)", "success");
+        }
       } else {
         showToast("Execution Failed", json.error || "Unknown error", "error");
       }
@@ -201,37 +194,25 @@ function App() {
     }
   };
 
-  // 处理 CommandBar 的指令执行
   const handleCommandExecute = async (cmd: string) => {
     await handleRun(null, null, null, "", cmd);
   };
 
-  // 处理 QuickAction 的点击
   const handleActionClick = (act: ActionItem) => {
     let args = act.args || {};
     let promptPrefix = act.promptPrefix;
-
-    // 特殊逻辑：List Files 需要读取输入框
-    if (act.id === "ls") {
-      const currentInput = searchRef.current?.getValue() || "";
-      const targetPath = currentInput || ".";
-      args = { path: targetPath };
-      promptPrefix = `Structure of directory ${targetPath}:\n\n`;
-    }
-
+    // 移除原有的 ls 特殊逻辑
     handleRun(act.server, act.tool, args, promptPrefix);
   };
 
   return (
     <Toast.Provider swipeDirection="right">
-      {/* 背景光晕 */}
       <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
         <div className="absolute top-[-20%] left-[-20%] w-[500px] h-[500px] bg-blue-200/30 rounded-full blur-[100px] opacity-70"></div>
         <div className="absolute bottom-[-20%] right-[-20%] w-[500px] h-[500px] bg-purple-200/30 rounded-full blur-[100px] opacity-70"></div>
       </div>
 
       <div className="min-h-screen flex flex-col p-5 gap-6 font-sans relative">
-        {/* Header */}
         <header className="flex items-center justify-between pt-2 px-1">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center border border-black/5">
@@ -252,14 +233,14 @@ function App() {
 
           <button
             onClick={() => setIsPromptMgrOpen(true)}
-            className="p-2 rounded-lg hover:bg-white/50 active:scale-95 transition-all text-slate-600 border border-transparent hover:border-black/5 hover:shadow-sm"
+            className="flex items-center gap-2 px-3 py-2 rounded-[14px] bg-white shadow-sm border border-slate-200/60 text-slate-600 hover:text-blue-600 hover:border-blue-200 hover:shadow-md active:scale-95 transition-all duration-200 group"
             title="Manage Prompt Templates"
           >
-            <BookTemplate className="w-5 h-5" />
+            <BookTemplate className="w-4 h-4 group-hover:scale-110 transition-transform" />
+            <span className="text-[13px] font-semibold">Templates</span>
           </button>
         </header>
 
-        {/* 🔥 Magic Command Bar (New) */}
         <section className="animate-in fade-in slide-in-from-top-4 duration-500">
           <CommandBar
             onExecute={handleCommandExecute}
@@ -268,24 +249,16 @@ function App() {
           />
         </section>
 
-        {/* 快捷动作 */}
         <QuickActions
           actions={ACTIONS}
           loading={loading}
           onRun={handleActionClick}
-          getDynamicDesc={(id) => {
-            if (id === "ls") {
-              const val = searchRef.current?.getValue();
-              return val ? val : "View root files";
-            }
-            return "";
-          }}
         />
 
-        {/* 文件阅读器 */}
         <section>
+          {/* ✅ 修改：重命名 Title */}
           <h2 className="text-[13px] font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1">
-            File Reader
+            Project Explorer
           </h2>
           <FileSearch
             ref={searchRef}
@@ -304,14 +277,12 @@ function App() {
           />
         </section>
 
-        {/* 结果预览 */}
         <ResultPreview
           content={resultPreview}
           prompts={prompts}
           showToast={showToast}
         />
 
-        {/* 提示词管理弹窗 */}
         <PromptManager
           isOpen={isPromptMgrOpen}
           onClose={() => setIsPromptMgrOpen(false)}
@@ -321,7 +292,6 @@ function App() {
         />
       </div>
 
-      {/* 全局通知 */}
       <Toast.Root
         open={open}
         onOpenChange={setOpen}

@@ -5,16 +5,10 @@ interface QuickActionsProps {
   actions: ActionItem[];
   loading: boolean;
   onRun: (action: ActionItem) => void;
-  // 用于显示在卡片上的动态描述
-  getDynamicDesc?: (actionId: string) => string;
+  // ✅ 移除 getDynamicDesc 接口
 }
 
-export function QuickActions({
-  actions,
-  loading,
-  onRun,
-  getDynamicDesc,
-}: QuickActionsProps) {
+export function QuickActions({ actions, loading, onRun }: QuickActionsProps) {
   return (
     <section>
       <h2 className="text-[13px] font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1">
@@ -39,8 +33,9 @@ export function QuickActions({
               <span className="block font-bold text-slate-800 text-[15px] mb-0.5 leading-tight">
                 {act.label}
               </span>
-              <span className="block text-[12px] text-slate-500 font-medium leading-tight opacity-80">
-                {getDynamicDesc ? getDynamicDesc(act.id) : act.desc}
+              {/* ✅ 修改：直接显示静态描述 */}
+              <span className="block text-[12px] text-slate-500 font-medium leading-tight opacity-80 line-clamp-2">
+                {act.desc}
               </span>
             </div>
           </button>
