@@ -13,9 +13,10 @@ import { FileSearch, type FileSearchRef } from "./components/FileSearch";
 import { PromptManager } from "./components/PromptManager";
 import { ResultPreview } from "./components/ResultPreview";
 import { QuickActions } from "./components/QuickActions";
+import { CommandBar } from "./components/CommandBar";
 import { ActionItem, PromptTemplate, ToastType } from "./types";
 
-// 配置
+// 配置：所有文本已转为英文
 const ACTIONS: ActionItem[] = [
   {
     id: "git-diff",
@@ -88,33 +89,90 @@ function App() {
     localStorage.setItem("mcp-prompts", JSON.stringify(prompts));
   }, [prompts]);
 
-  // 执行核心逻辑
+  // 🔥 核心执行逻辑：支持常规调用和原始指令调用
   const handleRun = async (
-    serverName: string,
-    toolName: string,
-    args: any,
+    serverName: string | null,
+    toolName: string | null,
+    args: any | null,
     promptPrefix: string = "",
+    commandStr?: string,
   ) => {
     setLoading(true);
     setResultPreview("");
 
     try {
+      const body = commandStr
+        ? { command: commandStr }
+        : { serverName, toolName, args };
+
       const res = await fetch("http://localhost:8080/api/invoke", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverName, toolName, args }),
+        body: JSON.stringify(body),
       });
 
       const json = await res.json();
 
       if (json.success) {
         let contentStr = "";
-        // 格式化目录列表
-        if (
+
+        // 1. 🔥 格式化工具列表 (mcp:list) - 增加参数详情显示
+        if (json.isToolList && Array.isArray(json.data)) {
+          const grouped: Record<string, any[]> = {};
+          json.data.forEach((t: any) => {
+            if (!grouped[t.server]) grouped[t.server] = [];
+            grouped[t.server].push(t);
+          });
+
+          const lines: string[] = [];
+          lines.push("📦 AVAILABLE MCP TOOLS (With Arguments)\n");
+
+          for (const [server, tools] of Object.entries(grouped)) {
+            lines.push(`SERVER: ${server}`);
+            tools.forEach((t: any) => {
+              lines.push(`  ├─ 🛠️  ${t.name}`);
+
+              // 1. 描述
+              if (t.description) {
+                lines.push(`  │   Description: ${t.description}`);
+              }
+
+              // 2. 参数 Schema 解析
+              const props = t.inputSchema?.properties || {};
+              const required = t.inputSchema?.required || [];
+              const propKeys = Object.keys(props);
+
+              if (propKeys.length > 0) {
+                lines.push(`  │   Args:`);
+                propKeys.forEach((key, idx) => {
+                  const isLast = idx === propKeys.length - 1;
+                  const p = props[key];
+                  const reqMark = required.includes(key)
+                    ? "(Required)"
+                    : "(Optional)";
+                  const desc = p.description ? ` - ${p.description}` : "";
+
+                  // 格式: └─ key (type) (Required) - description
+                  lines.push(`  │     └─ ${key} [${p.type}] ${reqMark}${desc}`);
+                });
+              } else {
+                lines.push(`  │   Args: (None)`);
+              }
+
+              // 增加一点间距
+              lines.push(`  │`);
+            });
+            lines.push("");
+          }
+          contentStr = lines.join("\n");
+        }
+        // ... (其他 else if 逻辑保持不变: 目录列表, JSON, 文本)
+        else if (
           Array.isArray(json.data) &&
           json.data.length > 0 &&
           "isDirectory" in json.data[0]
         ) {
+          // ...
           const dirs = json.data.filter((item: any) => item.isDirectory);
           const files = json.data.filter((item: any) => !item.isDirectory);
           contentStr = [
@@ -124,15 +182,14 @@ function App() {
         } else if (typeof json.data === "object") {
           contentStr = JSON.stringify(json.data, null, 2);
         } else {
-          contentStr = json.data;
+          contentStr = String(json.data);
         }
 
+        // 全局替换反引号
+        contentStr = contentStr.replace(/`/g, "'");
+
         setResultPreview(contentStr);
-        showToast(
-          "Execution Successful",
-          "Result ready, please copy manually",
-          "success",
-        );
+        showToast("Execution Successful", "Command executed", "success");
       } else {
         showToast("Execution Failed", json.error || "Unknown error", "error");
       }
@@ -147,11 +204,17 @@ function App() {
     }
   };
 
-  // 处理 QuickAction 点击
+  // 处理 CommandBar 的指令执行
+  const handleCommandExecute = async (cmd: string) => {
+    await handleRun(null, null, null, "", cmd);
+  };
+
+  // 处理 QuickAction 的点击
   const handleActionClick = (act: ActionItem) => {
     let args = act.args || {};
     let promptPrefix = act.promptPrefix;
 
+    // 特殊逻辑：List Files 需要读取输入框
     if (act.id === "ls") {
       const currentInput = searchRef.current?.getValue() || "";
       const targetPath = currentInput || ".";
@@ -199,6 +262,15 @@ function App() {
           </button>
         </header>
 
+        {/* 🔥 Magic Command Bar (New) */}
+        <section className="animate-in fade-in slide-in-from-top-4 duration-500">
+          <CommandBar
+            onExecute={handleCommandExecute}
+            loading={loading}
+            showToast={showToast}
+          />
+        </section>
+
         {/* 快捷动作 */}
         <QuickActions
           actions={ACTIONS}
@@ -206,7 +278,6 @@ function App() {
           onRun={handleActionClick}
           getDynamicDesc={(id) => {
             if (id === "ls") {
-              // 尝试获取当前输入框的值，如果获取不到则回退
               const val = searchRef.current?.getValue();
               return val ? val : "View root files";
             }

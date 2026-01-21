@@ -1,127 +1,189 @@
 import express from "express";
 import cors from "cors";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { exec } from "child_process";
-import util from "util";
-import fs from "fs";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import fs from "fs/promises";
 import path from "path";
+import { exec } from "child_process";
+import { promisify } from "util";
 
-const execAsync = util.promisify(exec);
-
+const execAsync = promisify(exec);
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
-// =================配置区域=================
-const PORT = 8080;
+// --- 配置区域 ---
 const PROJECT_ROOT = "/home/fkq/workspace/vibe/chorus";
-// =========================================
 
-// 🔥【核心修复】强制切换进程工作目录到目标项目 🔥
-// 这样所有的 MCP 工具（包括 FS 和 Git）都会默认在 PROJECT_ROOT 下运行
-try {
-  if (fs.existsSync(PROJECT_ROOT)) {
-    process.chdir(PROJECT_ROOT);
-    console.log(`📂 Working directory changed to: ${PROJECT_ROOT}`);
-  } else {
-    console.error(`❌ Target directory does not exist: ${PROJECT_ROOT}`);
-  }
-} catch (err) {
-  console.error(`❌ Failed to change directory: ${err}`);
-}
-
-// 外部 MCP 服务配置
-const MCP_SERVERS = {
+const MCP_SERVERS: Record<string, any> = {
   fs: {
     command: "npx",
-    // 这里的 args 依然需要传 PROJECT_ROOT 作为白名单
     args: ["-y", "@modelcontextprotocol/server-filesystem", PROJECT_ROOT],
+  },
+  filesystem: {
+    command: "npx",
+    args: [
+      "-y",
+      "@modelcontextprotocol/server-filesystem",
+      "/home/fkq/workspace/vibe/chorus/apps/web",
+    ],
+  },
+  "vibeus-ds": {
+    transport: "http",
+    url: "http://192.168.51.31:3333/mcp",
   },
 };
 
 const mcpClients = new Map<string, Client>();
 
-async function connectMcp() {
-  for (const [name, config] of Object.entries(MCP_SERVERS)) {
-    try {
-      const transport = new StdioClientTransport({
-        command: config.command,
-        args: config.args,
-        env: { ...process.env, ...config.env },
-      });
+// --- 辅助函数 ---
 
-      const client = new Client(
-        { name: "SidecarHost", version: "1.0" },
-        { capabilities: {} },
-      );
-      await client.connect(transport);
-      mcpClients.set(name, client);
-      console.log(`✅ [${name}] Connected (Root: ${PROJECT_ROOT})`);
-    } catch (e) {
-      console.error(`❌ [${name}] Connection failed:`, e);
-    }
+function parseMcpCommand(command: string) {
+  const regex = /^mcp:([^:]+):([^(]+)\((.*)\)$/;
+  const match = command.trim().match(regex);
+
+  if (!match) {
+    throw new Error(
+      "Invalid command format. Expected: mcp:server:tool(json_args)",
+    );
+  }
+
+  const [_, serverName, toolName, argsStr] = match;
+
+  let args = {};
+  try {
+    args = argsStr.trim() ? JSON.parse(argsStr) : {};
+  } catch (e) {
+    throw new Error(`Invalid JSON arguments: ${argsStr}`);
+  }
+
+  return { serverName, toolName, args };
+}
+
+async function listFilesWithTypes(dirPath: string) {
+  const fullPath = path.isAbsolute(dirPath)
+    ? dirPath
+    : path.join(PROJECT_ROOT, dirPath);
+  try {
+    const entries = await fs.readdir(fullPath, { withFileTypes: true });
+    return entries.map((entry) => ({
+      name: entry.name,
+      isDirectory: entry.isDirectory(),
+      path: path.join(dirPath, entry.name),
+    }));
+  } catch (e: any) {
+    return [{ name: `Error: ${e.message}`, isDirectory: false, path: "" }];
   }
 }
 
 async function handleGitTool(toolName: string, args: any) {
-  // 因为我们已经 process.chdir 了，这里其实可以不用传 cwd，但为了保险还是保留
-  const options = { cwd: PROJECT_ROOT };
-  try {
-    switch (toolName) {
-      case "diff":
-        const { stdout: diffOut } = await execAsync("git diff", options);
-        return diffOut || "No changes detected (Clean working tree).";
-      case "status":
-        const { stdout: statusOut } = await execAsync("git status", options);
-        return statusOut;
-      default:
-        return `Git tool '${toolName}' not implemented.`;
+  if (toolName === "diff") {
+    const { stdout } = await execAsync("git diff", { cwd: PROJECT_ROOT });
+    return stdout || "No changes detected.";
+  }
+  if (toolName === "status") {
+    const { stdout } = await execAsync("git status", { cwd: PROJECT_ROOT });
+    return stdout;
+  }
+  return "Unknown git tool";
+}
+
+const connectMcp = async () => {
+  for (const [name, config] of Object.entries(MCP_SERVERS)) {
+    try {
+      let transport;
+      if ("transport" in config && config.transport === "http") {
+        console.log(`🔌 [${name}] Connecting via HTTP to ${config.url}...`);
+        transport = new StreamableHTTPClientTransport(config.url);
+      } else {
+        console.log(
+          `🔌 [${name}] Spawning process: ${config.command} ${(config.args || []).join(" ")}`,
+        );
+        transport = new StdioClientTransport({
+          command: config.command!,
+          args: config.args || [],
+        });
+      }
+
+      const client = new Client(
+        { name: "mcp-sidecar-server", version: "1.0.0" },
+        { capabilities: { prompts: {}, resources: {}, tools: {} } },
+      );
+
+      await client.connect(transport);
+      mcpClients.set(name, client);
+      console.log(`✅ [${name}] Connected`);
+    } catch (error: any) {
+      console.error(`❌ [${name}] Connection failed: ${error.message}`);
     }
-  } catch (error: any) {
-    return `Git Error: ${error.message}`;
   }
-}
+};
 
-// ==========================================
-// 新增：专门用于 UI 自动补全的工具函数
-// ==========================================
-async function listFilesWithTypes(dirPath: string) {
-  try {
-    // 确保路径安全，防止跳出根目录 (简单的 .. 检查，生产环境可用更严格的 resolve)
-    if (dirPath.includes("..")) throw new Error("Access denied");
-
-    const fullPath = path.resolve(process.cwd(), dirPath);
-
-    // 读取目录内容，withFileTypes: true 让我们可以判断是文件还是文件夹
-    const dirents = await fs.promises.readdir(fullPath, {
-      withFileTypes: true,
-    });
-
-    return dirents.map((dirent) => ({
-      name: dirent.name,
-      // 告诉前端这是文件夹还是文件
-      isDirectory: dirent.isDirectory(),
-      // 拼好完整相对路径传回前端
-      path: path.join(dirPath, dirent.name),
-    }));
-  } catch (error) {
-    return []; // 如果路径不存在或报错，返回空数组，不让前端炸裂
-  }
-}
+// --- API 路由 ---
 
 app.post("/api/invoke", async (req, res) => {
-  const { serverName, toolName, args } = req.body;
-  try {
-    let resultData = "";
+  let { serverName, toolName, args, command } = req.body;
 
-    // 拦截 UI 的特殊请求：如果是 list_directory，我们返回增强版数据
-    // 这样前端就能拿到 isDirectory 字段了
+  try {
+    // 🔥 新增：处理 mcp:list 指令
+    if (command && command.trim() === "mcp:list") {
+      const allTools = [];
+
+      // 1. 获取所有连接的 MCP Client 工具
+      for (const [sName, client] of mcpClients.entries()) {
+        try {
+          const result = await client.listTools();
+          const tools = result.tools.map((t) => ({
+            server: sName,
+            name: t.name,
+            // 🟢 修改点：移除 description 的截断逻辑，如果有换行符也替换为空格，保持一行
+            description: (t.description || "(No description)").replace(
+              /\n/g,
+              " ",
+            ),
+            inputSchema: t.inputSchema,
+          }));
+          allTools.push(...tools);
+        } catch (e) {
+          console.error(`Failed to list tools for ${sName}`, e);
+        }
+      }
+
+      // 2. 添加内置 Git 工具
+      allTools.push(
+        {
+          server: "git",
+          name: "diff",
+          description: "Show changes between commits",
+          inputSchema: {},
+        },
+        {
+          server: "git",
+          name: "status",
+          description: "Show the working tree status",
+          inputSchema: {},
+        },
+      );
+
+      return res.json({ success: true, data: allTools, isToolList: true });
+    }
+
+    // 常规指令解析
+    if (command) {
+      const parsed = parseMcpCommand(command);
+      serverName = parsed.serverName;
+      toolName = parsed.toolName;
+      args = parsed.args;
+      console.log(`[Command] Parsed: ${serverName} -> ${toolName}`, args);
+    }
+
+    let resultData: any = "";
+
     if (serverName === "fs" && toolName === "list_directory") {
-      // 默认列出当前目录
       const targetPath = args.path || ".";
       const files = await listFilesWithTypes(targetPath);
-      // 直接返回 JSON 对象，而不是字符串，方便前端处理
       return res.json({ success: true, data: files, isStructured: true });
     }
 
@@ -131,25 +193,39 @@ app.post("/api/invoke", async (req, res) => {
       const client = mcpClients.get(serverName);
       if (!client) throw new Error(`Server '${serverName}' not active`);
 
+      // 针对 fs 服务，将相对路径转为绝对路径
+      if (serverName === "fs" && args && typeof args.path === "string") {
+        // 如果不是绝对路径，则拼接 PROJECT_ROOT
+        if (!path.isAbsolute(args.path)) {
+          const originalPath = args.path;
+          args.path = path.join(PROJECT_ROOT, originalPath);
+          console.log(
+            `[Path Fix] Resolved '${originalPath}' -> '${args.path}'`,
+          );
+        }
+      }
+
       const result = await client.callTool({
         name: toolName,
         arguments: args || {},
       });
+
+      // 提取文本内容
       // @ts-ignore
       resultData =
         result.content.find((c: any) => c.type === "text")?.text ||
         JSON.stringify(result);
     }
+
     res.json({ success: true, data: resultData });
   } catch (error: any) {
-    // 优化错误日志，方便调试
-    console.error(`❌ Error [${serverName}/${toolName}]:`, error.message);
+    console.error(`Error: ${error.message}`);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-connectMcp().then(() => {
-  app.listen(PORT, () =>
-    console.log(`🚀 Sidecar Server running on port ${PORT}`),
-  );
+const PORT = 8080;
+app.listen(PORT, async () => {
+  console.log(`🚀 Sidecar Server running on port ${PORT}`);
+  await connectMcp();
 });

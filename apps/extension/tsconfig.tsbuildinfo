@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/lib/utils.ts"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/main.tsx","./src/types.ts","./src/components/CommandBar.tsx","./src/components/FileSearch.tsx","./src/components/PromptManager.tsx","./src/components/QuickActions.tsx","./src/components/ResultPreview.tsx","./src/components/ui/input.tsx","./src/lib/utils.ts"],"version":"5.9.3"}
