@@ -2,45 +2,47 @@ import express from "express";
 import cors from "cors";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { exec } from "child_process";
+import util from "util";
+import fs from "fs"; // 引入 fs 模块
 
-// 定义配置接口
-interface McpConfig {
-  command: string;
-  args: string[];
-  env?: Record<string, string>;
-}
+const execAsync = util.promisify(exec);
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PROJ = "/home/fkq/workspace/vibe/chorus";
+// =================配置区域=================
+const PORT = 8080;
+const PROJECT_ROOT = "/home/fkq/workspace/vibe/chorus";
+// =========================================
 
-// === 配置 MCP 工具 (修改为你本地的实际路径) ===
-const SERVERS: Record<string, McpConfig> = {
-  // === 修正：使用官方 Python 版 Git Server ===
-  git: {
-    // 方式 A: 如果你安装了 uv (推荐，速度快)
-    command: "uvx",
-    args: ["mcp-server-git", "--repository", PROJ],
+// 🔥【核心修复】强制切换进程工作目录到目标项目 🔥
+// 这样所有的 MCP 工具（包括 FS 和 Git）都会默认在 PROJECT_ROOT 下运行
+try {
+  if (fs.existsSync(PROJECT_ROOT)) {
+    process.chdir(PROJECT_ROOT);
+    console.log(`📂 Working directory changed to: ${PROJECT_ROOT}`);
+  } else {
+    console.error(`❌ Target directory does not exist: ${PROJECT_ROOT}`);
+  }
+} catch (err) {
+  console.error(`❌ Failed to change directory: ${err}`);
+}
 
-    // 方式 B: 如果你只有标准的 python/pip
-    // 这一步前提是你已经在终端运行过: pip install mcp-server-git
-    // command: "python", // 或者 "python3"
-    // args: ["-m", "mcp_server_git", "--repository", "/home/fkq/workspace/vibe"],
-  },
-
-  // === 保持不变：Node 版 Filesystem Server ===
+// 外部 MCP 服务配置
+const MCP_SERVERS = {
   fs: {
     command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-filesystem", PROJ],
+    // 这里的 args 依然需要传 PROJECT_ROOT 作为白名单
+    args: ["-y", "@modelcontextprotocol/server-filesystem", PROJECT_ROOT],
   },
 };
 
-const clients = new Map<string, Client>();
+const mcpClients = new Map<string, Client>();
 
 async function connectMcp() {
-  for (const [name, config] of Object.entries(SERVERS)) {
+  for (const [name, config] of Object.entries(MCP_SERVERS)) {
     try {
       const transport = new StdioClientTransport({
         command: config.command,
@@ -53,42 +55,62 @@ async function connectMcp() {
         { capabilities: {} },
       );
       await client.connect(transport);
-      clients.set(name, client);
-      console.log(`✅ [${name}] Connected`);
+      mcpClients.set(name, client);
+      console.log(`✅ [${name}] Connected (Root: ${PROJECT_ROOT})`);
     } catch (e) {
-      console.error(`❌ [${name}] Failed to connect:`, e);
+      console.error(`❌ [${name}] Connection failed:`, e);
     }
   }
 }
 
-// === 通用调用接口 ===
+async function handleGitTool(toolName: string, args: any) {
+  // 因为我们已经 process.chdir 了，这里其实可以不用传 cwd，但为了保险还是保留
+  const options = { cwd: PROJECT_ROOT };
+  try {
+    switch (toolName) {
+      case "diff":
+        const { stdout: diffOut } = await execAsync("git diff", options);
+        return diffOut || "No changes detected (Clean working tree).";
+      case "status":
+        const { stdout: statusOut } = await execAsync("git status", options);
+        return statusOut;
+      default:
+        return `Git tool '${toolName}' not implemented.`;
+    }
+  } catch (error: any) {
+    return `Git Error: ${error.message}`;
+  }
+}
+
 app.post("/api/invoke", async (req, res) => {
   const { serverName, toolName, args } = req.body;
-
-  const client = clients.get(serverName);
-  if (!client) {
-    res.status(404).json({ error: `Server '${serverName}' not active` });
-    return;
-  }
-
   try {
-    const result = await client.callTool({
-      name: toolName,
-      arguments: args || {},
-    });
+    let resultData = "";
+    if (serverName === "git") {
+      resultData = await handleGitTool(toolName, args);
+    } else {
+      const client = mcpClients.get(serverName);
+      if (!client) throw new Error(`Server '${serverName}' not active`);
 
-    // 简化返回结构，提取文本内容
-    // @ts-ignore - SDK 类型可能有变动，视实际返回而定
-    const textContent =
-      result.content.find((c: any) => c.type === "text")?.text ||
-      JSON.stringify(result);
-
-    res.json({ success: true, data: textContent });
+      const result = await client.callTool({
+        name: toolName,
+        arguments: args || {},
+      });
+      // @ts-ignore
+      resultData =
+        result.content.find((c: any) => c.type === "text")?.text ||
+        JSON.stringify(result);
+    }
+    res.json({ success: true, data: resultData });
   } catch (error: any) {
+    // 优化错误日志，方便调试
+    console.error(`❌ Error [${serverName}/${toolName}]:`, error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 connectMcp().then(() => {
-  app.listen(8080, () => console.log("🚀 Server running on port 8080"));
+  app.listen(PORT, () =>
+    console.log(`🚀 Sidecar Server running on port ${PORT}`),
+  );
 });

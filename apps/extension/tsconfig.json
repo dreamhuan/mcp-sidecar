@@ -1,7 +1,27 @@
 {
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // 这里的配置主要用于 IDE 提示
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true, // 主配置可以是 noEmit，因为它把任务分发给了 references
+    "jsx": "react-jsx"
+  },
   "files": [],
   "references": [
-    { "path": "./tsconfig.app.json" },
+    // 你的源码配置 (如果有 tsconfig.app.json 就引那个，没有就引自身也行，但通常 Vite 会拆分)
+    // 如果你只有一个 tsconfig.json 负责所有，那就不用 references
+    // 但根据报错，你肯定用了 references
     { "path": "./tsconfig.node.json" }
-  ]
+  ],
+  "include": ["src"]
 }
