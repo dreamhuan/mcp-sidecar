@@ -1,0 +1,14 @@
+{
+  "name": "mcp-sidecar-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter server dev\" \"pnpm --filter extension dev\"",
+    "build": "pnpm -r run build",
+    "clean": "rm -rf node_modules apps/*/node_modules"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "typescript": "^5.0.0"
+  }
+}
