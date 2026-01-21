@@ -1,17 +1,16 @@
 import { useState, useRef, useEffect } from "react";
 import {
   Terminal,
-  FileText,
   GitBranch,
-  Copy,
+  FileText,
   Loader2,
-  Search,
-  Command,
+  Copy,
   CheckCircle2,
   AlertCircle,
 } from "lucide-react";
 import * as Toast from "@radix-ui/react-toast";
 import { cn } from "./lib/utils";
+import { FileSearch, type FileSearchRef } from "./components/FileSearch";
 
 // --- 配置区域 ---
 const ACTIONS = [
@@ -21,7 +20,7 @@ const ACTIONS = [
     server: "git",
     tool: "diff",
     promptPrefix: "请分析以下代码变更并检查潜在Bug：\n\n",
-    icon: <GitBranch className="w-6 h-6 text-blue-500" />, // macOS 风格图标颜色
+    icon: <GitBranch className="w-6 h-6 text-blue-500" />,
     desc: "查看未提交变更",
   },
   {
@@ -29,19 +28,21 @@ const ACTIONS = [
     label: "List Files",
     server: "fs",
     tool: "list_directory",
-    args: { path: "." },
+    args: { path: "." }, // 默认参数，实际执行时会被 Search 输入框覆盖
     promptPrefix: "这是我当前的项目结构：\n\n",
     icon: <FileText className="w-6 h-6 text-indigo-500" />,
-    desc: "查看根目录结构",
+    desc: "查看目录结构",
   },
 ];
 
 function App() {
   const [loading, setLoading] = useState(false);
-  const [filePath, setFilePath] = useState("");
   const [resultPreview, setResultPreview] = useState("");
 
-  // Toast State
+  // 引用 Search 组件，用于获取当前输入框的值
+  const searchRef = useRef<FileSearchRef>(null);
+
+  // Toast 状态
   const [open, setOpen] = useState(false);
   const [toastConfig, setToastConfig] = useState({
     title: "",
@@ -84,10 +85,36 @@ function App() {
       const json = await res.json();
 
       if (json.success) {
-        const finalContent = `${promptPrefix}\`\`\`\n${json.data}\n\`\`\``;
+        let contentStr = "";
+
+        // 🟢 针对文件列表的特殊格式化：纯文本风格
+        if (
+          Array.isArray(json.data) &&
+          json.data.length > 0 &&
+          "isDirectory" in json.data[0]
+        ) {
+          const dirs = json.data.filter((item: any) => item.isDirectory);
+          const files = json.data.filter((item: any) => !item.isDirectory);
+
+          // 文件夹加 / 后缀
+          const dirLines = dirs.map((d: any) => `${d.name}/`);
+          const fileLines = files.map((f: any) => f.name);
+
+          contentStr = [...dirLines, ...fileLines].join("\n");
+        }
+        // 普通 JSON 对象 (转字符串)
+        else if (typeof json.data === "object") {
+          contentStr = JSON.stringify(json.data, null, 2);
+        }
+        // 普通文本
+        else {
+          contentStr = json.data;
+        }
+
+        const finalContent = `${promptPrefix}\`\`\`\n${contentStr}\n\`\`\``;
         await navigator.clipboard.writeText(finalContent);
         showToast("已复制", "内容已复制到剪贴板", "success");
-        setResultPreview(json.data);
+        setResultPreview(contentStr);
       } else {
         showToast("执行失败", json.error || "未知错误", "error");
       }
@@ -100,7 +127,7 @@ function App() {
 
   return (
     <Toast.Provider swipeDirection="right">
-      {/* 背景光晕 (Mesh Gradient) */}
+      {/* 背景光晕 */}
       <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
         <div className="absolute top-[-20%] left-[-20%] w-[500px] h-[500px] bg-blue-200/30 rounded-full blur-[100px] opacity-70"></div>
         <div className="absolute bottom-[-20%] right-[-20%] w-[500px] h-[500px] bg-purple-200/30 rounded-full blur-[100px] opacity-70"></div>
@@ -136,29 +163,36 @@ function App() {
             {ACTIONS.map((act) => (
               <button
                 key={act.id}
-                onClick={() =>
-                  handleRun(
-                    act.server,
-                    act.tool,
-                    act.args || {},
-                    act.promptPrefix,
-                  )
-                }
+                onClick={() => {
+                  let args = act.args || {};
+                  let promptPrefix = act.promptPrefix;
+
+                  // 🔥 联动逻辑：点击 List Files 时，读取输入框的路径
+                  if (act.id === "ls") {
+                    const currentInput = searchRef.current?.getValue() || "";
+                    const targetPath = currentInput || ".";
+
+                    args = { path: targetPath };
+                    promptPrefix = `目录 ${targetPath} 的结构：\n\n`;
+                  }
+
+                  handleRun(act.server, act.tool, args, promptPrefix);
+                }}
                 disabled={loading}
-                className="group relative flex flex-col items-start p-4 h-32 rounded-[20px] text-left glass-button"
+                className="group relative flex flex-col items-start p-4 h-32 rounded-[20px] text-left glass-button transition-all duration-200 active:scale-[0.98]"
               >
-                <div className="mb-auto p-2 bg-white rounded-full shadow-sm">
+                <div className="mb-auto w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm border border-slate-100/50 group-hover:scale-110 transition-transform">
                   {loading ? (
                     <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
                   ) : (
                     act.icon
                   )}
                 </div>
-                <div className="z-10">
-                  <span className="block font-bold text-slate-800 text-[15px] mb-0.5">
+                <div className="z-10 mt-3">
+                  <span className="block font-bold text-slate-800 text-[15px] mb-0.5 leading-tight">
                     {act.label}
                   </span>
-                  <span className="block text-[11px] text-slate-500 font-medium leading-tight">
+                  <span className="block text-[12px] text-slate-500 font-medium leading-tight opacity-80">
                     {act.desc}
                   </span>
                 </div>
@@ -167,63 +201,57 @@ function App() {
           </div>
         </section>
 
-        {/* File Reader (Spotlight Style) */}
+        {/* File Reader (带搜索和自动补全) */}
         <section>
           <h2 className="text-[13px] font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1">
             File Reader
           </h2>
-          <div className="glass-panel p-2 rounded-[18px] flex items-center gap-2 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all">
-            <div className="pl-3 text-slate-400">
-              <Search className="w-5 h-5" strokeWidth={2.5} />
-            </div>
-            <input
-              type="text"
-              value={filePath}
-              onChange={(e) => setFilePath(e.target.value)}
-              onKeyDown={(e) =>
-                e.key === "Enter" &&
-                filePath &&
+
+          <FileSearch
+            ref={searchRef}
+            loading={loading}
+            // 🔥 核心修改：根据路径是否以 / 结尾，决定是列出目录还是读取文件
+            onSelect={(path) => {
+              if (path.endsWith("/") || path === "." || path === "..") {
+                // 如果是目录 -> 执行 List Files
+                handleRun(
+                  "fs",
+                  "list_directory",
+                  { path },
+                  `目录 ${path} 的结构：\n\n`,
+                );
+              } else {
+                // 如果是文件 -> 执行 Read File
                 handleRun(
                   "fs",
                   "read_file",
-                  { path: filePath },
-                  `文件 ${filePath} 内容：\n\n`,
-                )
+                  { path },
+                  `文件 ${path} 内容：\n\n`,
+                );
               }
-              placeholder="Search file path..."
-              className="flex-1 bg-transparent border-none outline-none text-[14px] text-slate-700 placeholder:text-slate-400 font-medium h-10"
-            />
-            <button
-              disabled={!filePath || loading}
-              onClick={() =>
-                handleRun(
-                  "fs",
-                  "read_file",
-                  { path: filePath },
-                  `以下是文件 ${filePath} 的内容：\n\n`,
-                )
-              }
-              className="h-9 w-9 flex items-center justify-center rounded-xl bg-white shadow-sm border border-black/5 hover:bg-slate-50 active:scale-90 transition-all disabled:opacity-50 disabled:active:scale-100"
-            >
-              {loading ? (
-                <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
-              ) : (
-                <Command className="w-4 h-4 text-slate-600" />
-              )}
-            </button>
-          </div>
+            }}
+          />
         </section>
 
         {/* Result Preview (Terminal Style) */}
         {resultPreview && (
-          <section className="animate-in fade-in slide-in-from-bottom-6 duration-500 ease-out">
+          <section className="animate-in fade-in slide-in-from-bottom-6 duration-500 ease-out pb-6">
             <div className="flex items-center justify-between px-1 mb-2">
               <h2 className="text-[13px] font-semibold text-slate-400 uppercase tracking-wider">
                 Preview
               </h2>
-              <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-medium border border-emerald-100 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Copied
-              </span>
+
+              {/* 独立的复制按钮 */}
+              <button
+                onClick={async () => {
+                  await navigator.clipboard.writeText(resultPreview);
+                  showToast("已复制", "内容已手动复制到剪贴板", "success");
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/50 hover:bg-white border border-black/5 text-[11px] font-medium text-slate-600 transition-all active:scale-95 shadow-sm hover:shadow-md cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                Copy Content
+              </button>
             </div>
 
             {/* macOS Terminal Window */}
@@ -231,67 +259,71 @@ function App() {
               {/* Window Title Bar */}
               <div className="bg-[#2d2d2d] px-4 py-2.5 flex items-center gap-2 border-b border-white/5">
                 <div className="flex gap-1.5">
-                  <div className="w-3 h-3 rounded-full bg-[#ff5f56] border border-[#e0443e]"></div>{" "}
-                  {/* Close */}
-                  <div className="w-3 h-3 rounded-full bg-[#ffbd2e] border border-[#dea123]"></div>{" "}
-                  {/* Minimize */}
-                  <div className="w-3 h-3 rounded-full bg-[#27c93f] border border-[#1aab29]"></div>{" "}
-                  {/* Maximize */}
+                  <div className="w-3 h-3 rounded-full bg-[#ff5f56] border border-[#e0443e]"></div>
+                  <div className="w-3 h-3 rounded-full bg-[#ffbd2e] border border-[#dea123]"></div>
+                  <div className="w-3 h-3 rounded-full bg-[#27c93f] border border-[#1aab29]"></div>
                 </div>
                 <div className="flex-1 text-center text-slate-400 text-[10px] font-medium ml-[-46px]">
-                  bash — 80x24
+                  bash — output
                 </div>
               </div>
 
               {/* Content */}
-              <div className="p-4 text-slate-300 max-h-60 overflow-y-auto scrollbar-hide leading-relaxed">
-                <span className="text-emerald-400 mr-2">➜</span>
-                <span className="text-blue-400">~</span>
-                <span className="ml-2 text-slate-400">cat result.txt</span>
-                <div className="mt-2 text-slate-200 whitespace-pre-wrap break-all opacity-90">
-                  {resultPreview.slice(0, 600)}
-                  {resultPreview.length > 600 && (
-                    <span className="text-slate-500 block mt-2 italic">
-                      ... (Content truncated)
-                    </span>
-                  )}
+              <div className="p-4 text-slate-300 max-h-80 overflow-y-auto scrollbar-hide leading-relaxed selection:bg-blue-500/30">
+                <div className="flex gap-2">
+                  <span className="text-emerald-400">➜</span>
+                  <span className="text-blue-400">~</span>
+                  <span className="text-slate-400">cat output.txt</span>
                 </div>
-                <div className="mt-2 animate-pulse text-slate-500">_</div>
+
+                <div className="mt-3 text-slate-200 whitespace-pre-wrap break-all opacity-90 font-mono">
+                  {resultPreview}
+                </div>
+
+                <div className="mt-2 flex items-center gap-1">
+                  <span className="text-emerald-400">➜</span>
+                  <span className="text-blue-400">~</span>
+                  <span className="animate-pulse w-2 h-4 bg-slate-500 block"></span>
+                </div>
               </div>
             </div>
           </section>
         )}
       </div>
 
-      {/* Modern Toast */}
+      {/* Modern Toast Notification */}
       <Toast.Root
         open={open}
         onOpenChange={setOpen}
         className={cn(
           "fixed bottom-4 right-4 z-[100] w-[300px] rounded-[16px] p-4 shadow-[0_8px_30px_rgba(0,0,0,0.12)] border border-white/40 backdrop-blur-md",
           toastConfig.type === "error"
-            ? "bg-red-50/90 text-red-900"
-            : "bg-white/90 text-slate-900",
+            ? "bg-red-50/95 text-red-900"
+            : "bg-white/95 text-slate-900",
         )}
       >
-        <div className="flex gap-3">
+        <div className="flex items-start gap-3.5">
+          {/* 固定宽高防止挤压 */}
           <div
             className={cn(
-              "mt-0.5 p-1 rounded-full",
-              toastConfig.type === "error" ? "bg-red-100" : "bg-emerald-100",
+              "w-8 h-8 flex items-center justify-center rounded-full shrink-0 shadow-sm border border-black/5",
+              toastConfig.type === "error"
+                ? "bg-red-100 text-red-600"
+                : "bg-emerald-100 text-emerald-600",
             )}
           >
             {toastConfig.type === "error" ? (
-              <AlertCircle className="w-4 h-4 text-red-600" />
+              <AlertCircle className="w-5 h-5" />
             ) : (
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <CheckCircle2 className="w-5 h-5" />
             )}
           </div>
-          <div>
-            <Toast.Title className="text-[14px] font-bold">
+
+          <div className="flex-1 pt-0.5">
+            <Toast.Title className="text-[14px] font-bold leading-none mb-1">
               {toastConfig.title}
             </Toast.Title>
-            <Toast.Description className="text-[12px] opacity-70 mt-0.5 leading-snug">
+            <Toast.Description className="text-[13px] opacity-80 leading-snug">
               {toastConfig.desc}
             </Toast.Description>
           </div>

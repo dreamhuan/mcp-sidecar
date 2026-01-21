@@ -4,7 +4,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { exec } from "child_process";
 import util from "util";
-import fs from "fs"; // 引入 fs 模块
+import fs from "fs";
+import path from "path";
 
 const execAsync = util.promisify(exec);
 
@@ -82,10 +83,48 @@ async function handleGitTool(toolName: string, args: any) {
   }
 }
 
+// ==========================================
+// 新增：专门用于 UI 自动补全的工具函数
+// ==========================================
+async function listFilesWithTypes(dirPath: string) {
+  try {
+    // 确保路径安全，防止跳出根目录 (简单的 .. 检查，生产环境可用更严格的 resolve)
+    if (dirPath.includes("..")) throw new Error("Access denied");
+
+    const fullPath = path.resolve(process.cwd(), dirPath);
+
+    // 读取目录内容，withFileTypes: true 让我们可以判断是文件还是文件夹
+    const dirents = await fs.promises.readdir(fullPath, {
+      withFileTypes: true,
+    });
+
+    return dirents.map((dirent) => ({
+      name: dirent.name,
+      // 告诉前端这是文件夹还是文件
+      isDirectory: dirent.isDirectory(),
+      // 拼好完整相对路径传回前端
+      path: path.join(dirPath, dirent.name),
+    }));
+  } catch (error) {
+    return []; // 如果路径不存在或报错，返回空数组，不让前端炸裂
+  }
+}
+
 app.post("/api/invoke", async (req, res) => {
   const { serverName, toolName, args } = req.body;
   try {
     let resultData = "";
+
+    // 拦截 UI 的特殊请求：如果是 list_directory，我们返回增强版数据
+    // 这样前端就能拿到 isDirectory 字段了
+    if (serverName === "fs" && toolName === "list_directory") {
+      // 默认列出当前目录
+      const targetPath = args.path || ".";
+      const files = await listFilesWithTypes(targetPath);
+      // 直接返回 JSON 对象，而不是字符串，方便前端处理
+      return res.json({ success: true, data: files, isStructured: true });
+    }
+
     if (serverName === "git") {
       resultData = await handleGitTool(toolName, args);
     } else {
