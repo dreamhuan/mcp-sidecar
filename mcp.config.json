@@ -1,0 +1,22 @@
+{
+  "fs": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-filesystem",
+      "${PROJECT_ROOT}"
+    ]
+  },
+  "filesystem": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-filesystem",
+      "/home/fkq/workspace/vibe/chorus/apps/web"
+    ]
+  },
+  "vibeus-ds": {
+    "transport": "http",
+    "url": "http://192.168.51.31:3333/mcp"
+  }
+}

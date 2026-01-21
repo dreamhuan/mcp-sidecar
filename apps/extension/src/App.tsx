@@ -15,6 +15,7 @@ import { ResultPreview } from "./components/ResultPreview";
 import { QuickActions } from "./components/QuickActions";
 import { CommandBar } from "./components/CommandBar";
 import { ActionItem, PromptTemplate, ToastType } from "./types";
+import { API_BASE_URL } from "./common";
 
 // 配置：所有文本已转为英文
 const ACTIONS: ActionItem[] = [
@@ -105,7 +106,7 @@ function App() {
         ? { command: commandStr }
         : { serverName, toolName, args };
 
-      const res = await fetch("http://localhost:8080/api/invoke", {
+      const res = await fetch(`${API_BASE_URL}/api/invoke`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -194,11 +195,7 @@ function App() {
         showToast("Execution Failed", json.error || "Unknown error", "error");
       }
     } catch (e) {
-      showToast(
-        "Connection Failed",
-        "Please check local service (Port 8080)",
-        "error",
-      );
+      showToast("Connection Failed", "Please check local service", "error");
     } finally {
       setLoading(false);
     }

@@ -7,6 +7,10 @@ import fs from "fs/promises";
 import path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
+import dotenv from "dotenv";
+
+// 1. 加载根目录 .env (假设 server 在 apps/server，.env 在根目录，即 ../../.env)
+dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 
 const execAsync = promisify(exec);
 const app = express();
@@ -14,31 +18,33 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- 配置区域 ---
-const PROJECT_ROOT = "/home/fkq/workspace/vibe/chorus";
+// --- 配置区域 (从环境变量读取) ---
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
+const PROJECT_ROOT =
+  process.env.PROJECT_ROOT || path.resolve(__dirname, "../../../");
 
-const MCP_SERVERS: Record<string, any> = {
-  fs: {
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-filesystem", PROJECT_ROOT],
-  },
-  filesystem: {
-    command: "npx",
-    args: [
-      "-y",
-      "@modelcontextprotocol/server-filesystem",
-      "/home/fkq/workspace/vibe/chorus/apps/web",
-    ],
-  },
-  "vibeus-ds": {
-    transport: "http",
-    url: "http://192.168.51.31:3333/mcp",
-  },
-};
+console.log(`🔧 Config: PORT=${PORT}`);
+console.log(`🔧 Config: PROJECT_ROOT=${PROJECT_ROOT}`);
 
 const mcpClients = new Map<string, Client>();
 
 // --- 辅助函数 ---
+
+// 🔥 新增：加载并解析 mcp.config.json
+async function loadMcpConfig() {
+  try {
+    const configPath = path.resolve(__dirname, "../../../mcp.config.json");
+    const rawData = await fs.readFile(configPath, "utf-8");
+
+    // 简单的变量替换：将配置文件中的 ${PROJECT_ROOT} 替换为实际环境变量
+    const configStr = rawData.replace(/\$\{PROJECT_ROOT\}/g, PROJECT_ROOT);
+
+    return JSON.parse(configStr);
+  } catch (error) {
+    console.error("❌ Failed to load mcp.config.json:", error);
+    return {}; // 返回空对象防止崩溃
+  }
+}
 
 function parseMcpCommand(command: string) {
   const regex = /^mcp:([^:]+):([^(]+)\((.*)\)$/;
@@ -91,7 +97,10 @@ async function handleGitTool(toolName: string, args: any) {
 }
 
 const connectMcp = async () => {
-  for (const [name, config] of Object.entries(MCP_SERVERS)) {
+  // 🔥 动态加载配置
+  const mcpServers = await loadMcpConfig();
+
+  for (const [name, config] of Object.entries(mcpServers) as [string, any][]) {
     try {
       let transport;
       if ("transport" in config && config.transport === "http") {
@@ -109,7 +118,11 @@ const connectMcp = async () => {
 
       const client = new Client(
         { name: "mcp-sidecar-server", version: "1.0.0" },
-        { capabilities: { prompts: {}, resources: {}, tools: {} } },
+        {
+          // 🔥 修复点：Client 不应该声明 prompts/resources/tools
+          // 如果不需要特殊能力（如 sampling 或 roots），留空即可
+          capabilities: {},
+        },
       );
 
       await client.connect(transport);
@@ -127,18 +140,15 @@ app.post("/api/invoke", async (req, res) => {
   let { serverName, toolName, args, command } = req.body;
 
   try {
-    // 🔥 新增：处理 mcp:list 指令
     if (command && command.trim() === "mcp:list") {
       const allTools = [];
 
-      // 1. 获取所有连接的 MCP Client 工具
       for (const [sName, client] of mcpClients.entries()) {
         try {
           const result = await client.listTools();
           const tools = result.tools.map((t) => ({
             server: sName,
             name: t.name,
-            // 🟢 修改点：移除 description 的截断逻辑，如果有换行符也替换为空格，保持一行
             description: (t.description || "(No description)").replace(
               /\n/g,
               " ",
@@ -151,7 +161,6 @@ app.post("/api/invoke", async (req, res) => {
         }
       }
 
-      // 2. 添加内置 Git 工具
       allTools.push(
         {
           server: "git",
@@ -170,7 +179,6 @@ app.post("/api/invoke", async (req, res) => {
       return res.json({ success: true, data: allTools, isToolList: true });
     }
 
-    // 常规指令解析
     if (command) {
       const parsed = parseMcpCommand(command);
       serverName = parsed.serverName;
@@ -193,9 +201,7 @@ app.post("/api/invoke", async (req, res) => {
       const client = mcpClients.get(serverName);
       if (!client) throw new Error(`Server '${serverName}' not active`);
 
-      // 针对 fs 服务，将相对路径转为绝对路径
       if (serverName === "fs" && args && typeof args.path === "string") {
-        // 如果不是绝对路径，则拼接 PROJECT_ROOT
         if (!path.isAbsolute(args.path)) {
           const originalPath = args.path;
           args.path = path.join(PROJECT_ROOT, originalPath);
@@ -210,10 +216,9 @@ app.post("/api/invoke", async (req, res) => {
         arguments: args || {},
       });
 
-      // 提取文本内容
       // @ts-ignore
       resultData =
-        result.content.find((c: any) => c.type === "text")?.text ||
+        (result.content as any[]).find((c) => c.type === "text")?.text ||
         JSON.stringify(result);
     }
 
@@ -224,7 +229,6 @@ app.post("/api/invoke", async (req, res) => {
   }
 });
 
-const PORT = 8080;
 app.listen(PORT, async () => {
   console.log(`🚀 Sidecar Server running on port ${PORT}`);
   await connectMcp();

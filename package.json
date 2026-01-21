@@ -3,8 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"pnpm --filter server dev\" \"pnpm --filter extension dev\"",
+    "dev": "concurrently \"pnpm --filter @sidecar/server dev\" \"pnpm --filter @sidecar/extension dev\"",
+    "watch": "pnpm -r run watch",
     "build": "pnpm -r run build",
+    "start": "pnpm --filter @sidecar/extension build && pnpm --filter @sidecar/server start",
     "clean": "rm -rf node_modules apps/*/node_modules"
   },
   "devDependencies": {
