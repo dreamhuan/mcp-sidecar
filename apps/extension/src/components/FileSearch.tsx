@@ -114,7 +114,7 @@ export function FileSearch({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            serverName: "fs",
+            serverName: "internal",
             toolName: "list_directory",
             args: { path: dirToSearch },
           }),

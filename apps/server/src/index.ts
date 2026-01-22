@@ -42,88 +42,106 @@ async function loadMcpConfig() {
   }
 }
 
-// 解析命令，支持无参数时不加括号
-// 匹配模式：mcp:server:tool 后面可选 (args)
+// Tree 生成逻辑
+async function generateTree(
+  dir: string,
+  currentDepth: number,
+  maxDepth: number,
+): Promise<string> {
+  if (currentDepth >= maxDepth) return "";
+  const indent = "  ".repeat(currentDepth);
+  const prefix = currentDepth === 0 ? "" : "├── ";
+
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    let result = "";
+    const filtered = entries.filter(
+      (e) =>
+        ![
+          "node_modules",
+          ".git",
+          "dist",
+          ".DS_Store",
+          "coverage",
+          "build",
+          ".next",
+        ].includes(e.name),
+    );
+    filtered.sort((a, b) => {
+      if (a.isDirectory() === b.isDirectory())
+        return a.name.localeCompare(b.name);
+      return a.isDirectory() ? -1 : 1;
+    });
+
+    for (const entry of filtered) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        result += `${indent}${prefix}${entry.name}/\n`;
+        result += await generateTree(fullPath, currentDepth + 1, maxDepth);
+      } else {
+        result += `${indent}${prefix}${entry.name}\n`;
+      }
+    }
+    return result;
+  } catch (e) {
+    return `${indent}Error reading directory\n`;
+  }
+}
+
 function parseMcpCommand(command: string) {
   const regex = /^mcp:([^:]+):([^(]+?)(?:\((.*)\))?$/;
   const match = command.trim().match(regex);
-
-  if (!match) {
-    throw new Error(
-      "Invalid command format. Expected: mcp:server:tool or mcp:server:tool(json_args)",
-    );
-  }
-
+  if (!match) throw new Error("Invalid command format");
   const [_, serverName, toolName, argsStr] = match;
-
   let args = {};
   try {
-    if (argsStr && argsStr.trim()) {
-      args = JSON.parse(argsStr);
-    }
+    if (argsStr && argsStr.trim()) args = JSON.parse(argsStr);
   } catch (e) {
-    throw new Error(`Invalid JSON arguments: ${argsStr}`);
+    throw new Error(`Invalid JSON args`);
   }
-
-  return {
-    serverName: serverName.trim(),
-    toolName: toolName.trim(),
-    args,
-  };
+  return { serverName: serverName.trim(), toolName: toolName.trim(), args };
 }
 
+// 文件列表逻辑
 async function listFilesWithTypes(dirPath: string) {
-  const fullPath = path.isAbsolute(dirPath)
-    ? dirPath
-    : path.join(PROJECT_ROOT, dirPath);
+  // ✅ 安全性修改：强制使用 resolve 基于 PROJECT_ROOT，防止访问 /etc/passwd 等绝对路径
+  const fullPath = path.resolve(PROJECT_ROOT, dirPath);
+
+  // ✅ 安全性修改：增加越界检查
+  if (!fullPath.startsWith(PROJECT_ROOT)) {
+    throw new Error("Access denied: Cannot access paths outside PROJECT_ROOT");
+  }
+
   try {
     const entries = await fs.readdir(fullPath, { withFileTypes: true });
     return entries.map((entry) => ({
       name: entry.name,
       isDirectory: entry.isDirectory(),
-      path: path.join(dirPath, entry.name),
+      // 返回给前端的 path 应该是相对路径，方便回填到 Command Input
+      path: path.relative(PROJECT_ROOT, path.join(fullPath, entry.name)),
     }));
   } catch (e: any) {
     return [{ name: `Error: ${e.message}`, isDirectory: false, path: "" }];
   }
 }
 
-async function handleGitTool(toolName: string, args: any) {
-  if (toolName === "diff") {
-    const { stdout } = await execAsync("git diff", { cwd: PROJECT_ROOT });
-    return stdout || "No changes detected.";
-  }
-  if (toolName === "status") {
-    const { stdout } = await execAsync("git status", { cwd: PROJECT_ROOT });
-    return stdout;
-  }
-  return "Unknown git tool";
-}
-
 const connectMcp = async () => {
   const mcpServers = await loadMcpConfig();
-
   for (const [name, config] of Object.entries(mcpServers) as [string, any][]) {
     try {
       let transport;
       if ("transport" in config && config.transport === "http") {
-        console.log(`🔌 [${name}] Connecting via HTTP to ${config.url}...`);
         transport = new StreamableHTTPClientTransport(config.url);
       } else {
-        console.log(
-          `🔌 [${name}] Spawning: ${config.command} ${(config.args || []).join(" ")}`,
-        );
         transport = new StdioClientTransport({
           command: config.command!,
           args: config.args || [],
         });
       }
-
       const client = new Client(
         { name: "mcp-sidecar-server", version: "1.0.0" },
         { capabilities: {} },
       );
-
       await client.connect(transport);
       mcpClients.set(name, client);
       console.log(`✅ [${name}] Connected`);
@@ -139,48 +157,97 @@ app.post("/api/invoke", async (req, res) => {
   let { serverName, toolName, args, command } = req.body;
 
   try {
-    // 🔥 场景 1: mcp:list (及 mcp:list:xxx)
     if (command && command.trim().startsWith("mcp:list")) {
       const parts = command.trim().split(":");
-      const targetServer = parts[2]; // mcp:list:git -> git
-
+      const targetServer = parts[2];
       const allTools = [];
-      const gitTools = [
-        { name: "diff", description: "Show changes", inputSchema: {} },
-        { name: "status", description: "Show status", inputSchema: {} },
+
+      // 🔥 定义内部工具集 (Tree + Git + FS)
+      const internalTools = [
+        {
+          name: "get_tree",
+          description:
+            "Get project structure tree. Args: root (string, relative path), depth (number, default 3)",
+          inputSchema: {
+            type: "object",
+            properties: {
+              root: {
+                type: "string",
+                description:
+                  "Relative path to start tree from (e.g. 'src/components')",
+              },
+              depth: {
+                type: "number",
+                description: "Recursion depth (default 3)",
+              },
+            },
+          },
+        },
+        {
+          name: "list_directory",
+          description: "List files in directory (Internal)",
+          inputSchema: {
+            type: "object",
+            properties: {
+              // ✅ 补充描述：明确是相对路径
+              path: {
+                type: "string",
+                description: "Relative path from project root",
+              },
+            },
+          },
+        },
+        {
+          name: "read_file",
+          description: "Read file content (Internal)",
+          inputSchema: {
+            type: "object",
+            properties: {
+              // ✅ 补充描述：明确是相对路径
+              path: {
+                type: "string",
+                description: "Relative path from project root",
+              },
+            },
+          },
+        },
+        {
+          name: "git_diff",
+          description: "Show uncommitted changes (git diff)",
+          inputSchema: {}, // 无参数
+        },
+        {
+          name: "git_status",
+          description: "Show working tree status (git status)",
+          inputSchema: {}, // 无参数
+        },
       ];
 
-      // 🔥 格式化器优化：摘要模式下完全移除 description
       const formatTool = (t: any, sName: string, detailed: boolean) => ({
         server: sName,
         name: t.name,
-        // 仅在详细模式下返回 description 和 inputSchema
         ...(detailed
-          ? {
-              description: t.description || "",
-              inputSchema: t.inputSchema,
-            }
+          ? { description: t.description || "", inputSchema: t.inputSchema }
           : {}),
       });
 
       if (targetServer) {
-        // --- 详情模式 (Specific Server) ---
-        if (targetServer === "git") {
-          allTools.push(...gitTools.map((t) => formatTool(t, "git", true)));
+        if (targetServer === "internal") {
+          allTools.push(
+            ...internalTools.map((t) => formatTool(t, "internal", true)),
+          );
         } else {
           const client = mcpClients.get(targetServer);
           if (!client)
             return res
               .status(404)
               .json({ success: false, error: "Server not found" });
-
           const result = await client.listTools();
           allTools.push(
             ...result.tools.map((t) => formatTool(t, targetServer, true)),
           );
         }
       } else {
-        // --- 摘要模式 (All Servers, Names Only) ---
         for (const [sName, client] of mcpClients.entries()) {
           try {
             const result = await client.listTools();
@@ -191,36 +258,65 @@ app.post("/api/invoke", async (req, res) => {
             allTools.push({ server: sName, name: `Error: ${e}` });
           }
         }
-        allTools.push(...gitTools.map((t) => formatTool(t, "git", false)));
+        allTools.push(
+          ...internalTools.map((t) => formatTool(t, "internal", false)),
+        );
       }
-
       return res.json({ success: true, data: allTools, isToolList: true });
     }
 
-    // 🔥 场景 2: 通用执行
     if (command) {
       const parsed = parseMcpCommand(command);
       serverName = parsed.serverName;
       toolName = parsed.toolName;
       args = parsed.args;
-      console.log(`[Command] Parsed: ${serverName}:${toolName}`, args);
     }
 
-    // --- 执行逻辑 ---
     let resultData: any = "";
 
-    if (serverName === "fs" && toolName === "list_directory") {
-      const targetPath = args.path || ".";
-      const files = await listFilesWithTypes(targetPath);
-      return res.json({ success: true, data: files, isStructured: true });
+    // 🔥 处理 Internal Server (Tree + Git + FS)
+    if (serverName === "internal") {
+      if (toolName === "get_tree") {
+        const depth = args?.depth ? parseInt(args.depth) : 3;
+        let relativeRoot = args?.root || ".";
+        const targetPath = path.resolve(PROJECT_ROOT, relativeRoot);
+        if (!targetPath.startsWith(PROJECT_ROOT))
+          throw new Error("Access denied");
+        const header =
+          relativeRoot === "." ? `Project Root` : `${relativeRoot}/`;
+        resultData = `${header}\n` + (await generateTree(targetPath, 0, depth));
+      } else if (toolName === "git_diff") {
+        const { stdout } = await execAsync("git diff", { cwd: PROJECT_ROOT });
+        resultData = stdout || "No changes detected.";
+      } else if (toolName === "git_status") {
+        const { stdout } = await execAsync("git status", { cwd: PROJECT_ROOT });
+        resultData = stdout;
+      }
+      // 🔥 迁移过来的 FS 逻辑
+      else if (toolName === "list_directory") {
+        const targetPath = args.path || ".";
+        const files = await listFilesWithTypes(targetPath);
+        // 这里的 files 里的 path 已经是相对路径了，前端 FileSearch 点击后回填会更准确
+        return res.json({ success: true, data: files, isStructured: true });
+      } else if (toolName === "read_file") {
+        const targetPath = args.path;
+        if (!targetPath) throw new Error("Path is required");
+        const fullPath = path.resolve(PROJECT_ROOT, targetPath);
+        if (!fullPath.startsWith(PROJECT_ROOT))
+          throw new Error("Access denied");
+        resultData = await fs.readFile(fullPath, "utf-8");
+      } else {
+        throw new Error(`Unknown internal tool: ${toolName}`);
+      }
     }
+    // 🔥 删除了 else if (serverName === "fs" && toolName === "list_directory") ...
 
-    if (serverName === "git") {
-      resultData = await handleGitTool(toolName, args);
-    } else {
+    // 处理普通 MCP Clients (包括用户的 fs)
+    else {
       const client = mcpClients.get(serverName);
       if (!client) throw new Error(`Server '${serverName}' not active`);
 
+      // 路径转换 Middleware (保留以支持相对路径)
       if (serverName === "fs" && args && typeof args.path === "string") {
         if (!path.isAbsolute(args.path)) {
           args.path = path.join(PROJECT_ROOT, args.path);
@@ -231,7 +327,6 @@ app.post("/api/invoke", async (req, res) => {
         name: toolName,
         arguments: args || {},
       });
-
       // @ts-ignore
       resultData =
         (result.content as any[]).find((c) => c.type === "text")?.text ||

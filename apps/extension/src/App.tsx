@@ -5,6 +5,7 @@ import {
   BookTemplate,
   CheckCircle2,
   AlertCircle,
+  FolderTree,
 } from "lucide-react";
 import * as Toast from "@radix-ui/react-toast";
 import { cn } from "./lib/utils";
@@ -29,10 +30,22 @@ import {
 // 配置快捷指令
 const ACTIONS: ActionItem[] = [
   {
+    id: "project-tree",
+    label: "Copy Tree",
+    server: "internal",
+    tool: "get_tree",
+    // 默认不传参即为 root=".", depth=3
+    args: {},
+    promptPrefix: "Current Project Structure:\n\n",
+    icon: <FolderTree className="w-6 h-6 text-emerald-500" />,
+    desc: "Copy project structure (Default depth: 3)",
+  },
+  {
     id: "git-diff",
     label: "Git Diff",
-    server: "git",
-    tool: "diff",
+    // 🔥 修改：server 变更为 'internal', tool 变更为 'git_diff'
+    server: "internal",
+    tool: "git_diff",
     promptPrefix:
       "Please analyze the following code changes and check for potential bugs:\n\n",
     icon: <GitBranch className="w-6 h-6 text-blue-500" />,
@@ -317,7 +330,20 @@ function App() {
   };
 
   const handleActionClick = (act: ActionItem) => {
-    handleRun(act.server, act.tool, act.args || {}, act.promptPrefix);
+    // 1. 构造标准指令字符串 mcp:server:tool(args)
+    const args = act.args || {};
+    const hasArgs = Object.keys(args).length > 0;
+
+    // 如果有参数，序列化为 JSON；如果没有参数，为了简洁可以省略括号，或者加上 ()
+    // 这里我们选择：如果有参数才加括号，保持界面清爽
+    const argsSuffix = hasArgs ? `(${JSON.stringify(args)})` : "";
+    const commandStr = `mcp:${act.server}:${act.tool}${argsSuffix}`;
+
+    // 2. 利用 Ref 将指令回填到 CommandBar
+    commandBarRef.current?.setValue(commandStr);
+
+    // 3. 执行逻辑
+    handleRun(act.server, act.tool, args, act.promptPrefix);
   };
 
   // --- Render ---
@@ -403,11 +429,20 @@ function App() {
             ref={searchRef}
             loading={loading}
             onSelect={(path) => {
+              // 1. 判断类型
               const isDir = path.endsWith("/") || path === "." || path === "..";
+              const tool = isDir ? "list_directory" : "read_file";
+              const args = { path };
+
+              // 2. 🔥 构造指令字符串并回填到输入框
+              const commandStr = `mcp:internal:${tool}(${JSON.stringify(args)})`;
+              commandBarRef.current?.setValue(commandStr);
+
+              // 3. 执行
               handleRun(
-                "fs",
-                isDir ? "list_directory" : "read_file",
-                { path },
+                "internal",
+                tool,
+                args,
                 isDir
                   ? `Structure of directory ${path}:\n\n`
                   : `Content of file ${path}:\n\n`,
