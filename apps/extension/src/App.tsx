@@ -27,6 +27,8 @@ import {
   type ParsedCommand,
 } from "./lib/command-parser";
 
+import systemPromptRaw from "./prompts/system.md?raw";
+
 // 配置快捷指令
 const ACTIONS: ActionItem[] = [
   {
@@ -50,6 +52,21 @@ const ACTIONS: ActionItem[] = [
       "Please analyze the following code changes and check for potential bugs:\n\n",
     icon: <GitBranch className="w-6 h-6 text-blue-500" />,
     desc: "View uncommitted changes",
+  },
+];
+
+// 🔥 2. 定义系统模板
+const SYSTEM_PROMPTS: PromptTemplate[] = [
+  {
+    id: "init-protocol",
+    title: "⚡️ Initialize Sidecar Protocol",
+    content: systemPromptRaw, // 使用导入的文件内容
+  },
+  {
+    id: "bug-fix",
+    title: "🐛 Bug Fix Analysis",
+    content:
+      "Please analyze the following code changes and check for potential bugs:\n\n",
   },
 ];
 
@@ -95,19 +112,34 @@ function App() {
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
   // Load/Save Prompts
+  // 🔥 3. 修改加载逻辑：合并 System + User
   useEffect(() => {
     const saved = localStorage.getItem("mcp-prompts");
+    let userPrompts: PromptTemplate[] = [];
+
     if (saved) {
       try {
-        setPrompts(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          // 过滤掉 ID 与系统模板冲突的旧数据 (确保系统模板始终使用最新的 system.md)
+          const systemIds = new Set(SYSTEM_PROMPTS.map((p) => p.id));
+          userPrompts = parsed.filter((p) => !systemIds.has(p.id));
+        }
       } catch (e) {
-        console.error(e);
+        console.error("Failed to parse saved prompts", e);
       }
     }
+
+    // 合并：系统模板在前，用户模板在后
+    setPrompts([...SYSTEM_PROMPTS, ...userPrompts]);
   }, []);
 
+  // 保存逻辑保持不变，它会将合并后的结果存回去
+  // 这样下次加载时，逻辑依然有效（先剔除旧系统模板，再插入新系统模板）
   useEffect(() => {
-    localStorage.setItem("mcp-prompts", JSON.stringify(prompts));
+    if (prompts.length > 0) {
+      localStorage.setItem("mcp-prompts", JSON.stringify(prompts));
+    }
   }, [prompts]);
 
   // --- Core Logic: API Invocation ---

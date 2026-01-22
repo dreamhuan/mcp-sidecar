@@ -1,3 +1,4 @@
+import { Terminal, Play, Hash } from "lucide-react";
 import { cn } from "../lib/utils";
 
 interface ServerShortcutsProps {
@@ -11,12 +12,15 @@ export function ServerShortcuts({
   onSelect,
   loading,
 }: ServerShortcutsProps) {
-  // 基础命令 + 探测到的 Server 命令
-  const commands = ["mcp:list"];
+  // 🔥 更新 1: 默认列表命令
+  const commands = ["mcp:internal:list"];
 
   servers.forEach((s) => {
     if (s && s !== "all") {
-      commands.push(`mcp:list:${s}`);
+      // 🔥 更新 2: 特定 Server 的列表命令 (参数化)
+      // 如果你觉得 JSON 看起来太长，也可以简写，但标准 JSON 最稳妥
+      // 这里生成: mcp:internal:list({"server":"git"})
+      commands.push(`mcp:internal:list({"server":"${s}"})`);
     }
   });
 
@@ -42,9 +46,8 @@ export function ServerShortcuts({
           <span className="opacity-30 group-hover:opacity-100 transition-opacity">
             ›
           </span>
-          <span className="relative">
+          <span className="relative truncate max-w-[300px]">
             {cmd}
-            {/* 下划线动画效果 */}
             <span className="absolute left-0 right-0 bottom-0 h-[1px] bg-blue-500 scale-x-0 group-hover:scale-x-100 transition-transform origin-left"></span>
           </span>
         </button>

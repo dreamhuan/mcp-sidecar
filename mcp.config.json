@@ -1,5 +1,5 @@
 {
-  "filesystem": {
+  "fs": {
     "command": "npx",
     "args": [
       "-y",
