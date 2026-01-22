@@ -2,120 +2,133 @@
 
 **Project Name**: MCP Sidecar
 **Type**: Monorepo (pnpm workspace)
-**Description**: A developer tool consisting of a Chrome Extension (Frontend) and a Node.js Server (Backend). It bridges the browser UI with local system capabilities (FileSystem, Git) via the Model Context Protocol (MCP).
+**Description**: A "Human-in-the-Loop" AI Agent environment consisting of a Chrome Extension (Frontend) and a Node.js Server (Backend). It bridges the browser UI with local system capabilities via the Model Context Protocol (MCP), featuring a "Smart Executor" workflow for AI-driven operations.
 
 ## 1. Technology Stack
 
 - **Package Manager**: `pnpm` (Workspace enabled)
 - **Backend (`apps/server`)**: Node.js, Express, `@modelcontextprotocol/sdk`, `dotenv`, `tsx`.
 - **Frontend (`apps/extension`)**: React, Vite, Tailwind CSS v4, Lucide React, Radix UI.
+- **Build Tools**: Custom Vite plugin for Manifest injection & Env injection.
 
 ## 2. Directory Structure & Key Files
 
 ```text
 .
 ├── .env                       # [Root] Shared env vars (PORT, PROJECT_ROOT)
-├── mcp.config.json            # [Root] MCP Server definitions
+├── mcp.config.json            # [Root] External MCP Server definitions (e.g. fs)
 ├── package.json               # [Root] Orchestration scripts
 ├── apps
 │   ├── server
-│   │   ├── src/index.ts       # Main entry, API & MCP logic
+│   │   ├── src/index.ts       # Main entry, API routing, 'internal' server logic
 │   │   └── package.json
 │   └── extension
-│       ├── manifest.json      # [Template] Source manifest (Note: NOT in public/)
-│       ├── vite.config.ts     # Build config with manifest injection logic
+│       ├── manifest.json      # [Template] Source manifest
+│       ├── vite.config.ts     # Build config (Manifest injection)
 │       └── src
-│           ├── App.tsx        # Main UI, State, Execution Logic
+│           ├── App.tsx        # Main Logic: Smart Parser, Macro Execution, State
+│           ├── vite-env.d.ts  # Types including *.md?raw support
+│           ├── prompts
+│           │   └── system.md  # Default "Sidecar Protocol" system prompt
 │           ├── components
-│           │   ├── CommandBar.tsx   # Magic command input
-│           │   ├── FileSearch.tsx   # Project Explorer with auto-complete
-│           │   ├── QuickActions.tsx # Shortcut buttons grid
-│           │   └── ...
-│           └── common.ts      # Shared constants (API_BASE_URL)
+│           │   ├── CommandBar.tsx    # Input for Smart Commands
+│           │   ├── FileSearch.tsx    # Project Explorer (uses internal:list_directory)
+│           │   ├── QuickActions.tsx  # Compact vertical list of macros
+│           │   ├── PromptManager.tsx # Template management with Custom Delete Modal
+│           │   └── ServerShortcuts.tsx # Suggested commands list
+│           └── common.ts      # Shared constants
 
 ```
 
-## 3. Configuration Architecture (Decoupled)
+## 3. Configuration Architecture
 
 ### A. Environment Variables (`.env`)
 
-Located at project root. Used by both Server (runtime) and Extension (build-time).
+Located at project root.
 
 ```ini
 PORT=8080
 PROJECT_ROOT=/absolute/path/to/target/project
-VITE_API_URL=http://localhost:8080
 
 ```
 
-### B. MCP Server Config (`mcp.config.json`)
+### B. Dual-Track Filesystem Strategy
 
-Located at project root. Defines external MCP servers to connect to. Supports `${PROJECT_ROOT}` placeholder.
+1. **UI/Internal Operations (`internal`)**:
 
-```json
-{
-  "fs": {
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-filesystem", "${PROJECT_ROOT}"]
-  },
-  "git": { ... } // (Handled internally or via config)
-}
+- Handled natively by the Sidecar Backend.
+- Used for Project Explorer, Tree generation, and read-only context gathering.
+- **Strictly** scoped to `PROJECT_ROOT` for security.
 
-```
+2. **AI Write Operations (`fs`)**:
+
+- Handled by external `@modelcontextprotocol/server-filesystem` (defined in `mcp.config.json`).
+- AI is instructed to use `mcp:fs:write_file` for modifications.
 
 ## 4. Module Architecture
 
 ### Backend (`apps/server`)
 
-- **Initialization**: Loads `.env`, parses `mcp.config.json`, replaces placeholders, and connects to MCP servers using `StdioClientTransport` or `StreamableHTTPClientTransport`.
-- **Client Capability**: Explicitly sets `capabilities: {}` to avoid type errors (it acts as a Client, not a Host).
-- **API `/api/invoke**`:
-- **Standard Call**: Forwards requests to specific MCP clients.
-- **Path Rebasing**: Intercepts `fs` calls. Converts relative paths from frontend to absolute paths using `PROJECT_ROOT`.
-- **`mcp:list`**: Aggregates tools from all connected clients + internal Git tools, formats descriptions, and returns unified JSON.
+- **Internal Server ("Virtual")**:
+  A native namespace `internal` implemented directly in `index.ts`. It does **not** use stdio transport but handles requests in-memory.
+- `list`: Lists tools. Supports filtering (e.g., `{"server":"git"}`).
+- `get_tree`: Generates project structure string (Args: `root`, `depth`).
+- `list_directory`: Returns file list with types (used by UI).
+- `read_file`: Reads text content (used by UI).
+- `git_diff` / `git_status`: Native Git wrappers.
 
-- **Scripts**:
-- `dev`: `tsx src/index.ts` (Run directly)
-- `build`: `tsc --noEmit` (Type check only, do not block CI)
+- **API `/api/invoke**`:
+- Parses `mcp:server:tool` commands.
+- Routes `serverName === 'internal'` to internal logic.
+- Routes other names to connected MCP clients (via `mcp.config.json`).
+- **No top-level interceptors**: `list` logic is now a standard tool (`internal:list`).
 
 ### Frontend (`apps/extension`)
 
-- **Vite Strategy**:
-- **Manifest Injection**: A custom Vite plugin reads `apps/extension/manifest.json`, injects the `PORT` from `.env` into `host_permissions`, and outputs to `dist/manifest.json`.
+- **Smart Executor (Parser)**:
+- Parses commands in format `mcp:server:tool(json_args)`.
+- Supports executing single commands or batch-parsing from AI responses.
+- **Meta Commands**: Uses `mcp:internal:list` for discovering tools.
 
-- **Core Logic (`App.tsx`)**:
-- **Execution**: Sends POST to backend. On success -> auto-copies result to clipboard (`navigator.clipboard`) + Toast notification.
-- **Prompt Prefixing**: Prepend context (e.g., "Analyze this bug:") to the MCP result before display/copy.
+- **Macro: Init Context**:
+- A specialized action (Rocket Icon) that aggregates:
+
+1. **Protocol**: Loads `system.md` content.
+2. **Tools**: Calls `internal:list` to get available capabilities.
+3. **Context**: Calls `internal:get_tree` to get project structure.
+
+- Copies the combined markdown to clipboard for one-shot AI initialization.
 
 - **Components**:
-- **Project Explorer (`FileSearch.tsx`)**:
-- UX: Tab to complete.
-- Smart Enter: If input has no extension (e.g., "src"), treats it as a directory list request; otherwise reads file.
+- **PromptManager**:
+- Loads default `system.md` via `?raw` import.
+- Merges System Prompts with User Prompts (LocalStorage).
+- Features a custom **Backdrop Blur Modal** for delete confirmation (UI consistency).
 
-- **Quick Actions**: Visual cards for common tasks (e.g., Git Diff). static `desc`.
-- **Templates**: Toggleable "Templates" button in header.
+- **QuickActions**: Compact vertical layout with icons, descriptions, and hover-to-play interaction.
+- **ServerShortcuts**: Generates parameterized list commands (e.g., `mcp:internal:list({"server":"git"})`).
 
-## 5. Build & Run Workflow
+## 5. Critical Implementation Details
 
-- **One-Click Start**:
+1. **Naming Convention**: All commands strictly follow `mcp:{server}:{tool}` format.
 
-```bash
-pnpm start
+- Example: `mcp:internal:get_tree`, `mcp:fs:write_file`.
 
-```
+2. **List Logic**: There is no longer a magic `mcp:list` command. The frontend must request `mcp:internal:list` to fetch capabilities.
+3. **Path Security**:
 
-_Logic_: Runs `pnpm build` (Frontend) -> then runs `pnpm start` (Backend).
+- `internal` tools enforce `path.resolve(PROJECT_ROOT, relativePath)` and check `startsWith(PROJECT_ROOT)`.
+- Frontend always sends relative paths.
 
-- **Development**:
-- Server: `cd apps/server && pnpm dev`
-- Extension: `cd apps/extension && pnpm dev` (Visit `http://localhost:5173`)
+4. **Prompt Strategy**:
 
-## 6. Critical Implementation Details (Do Not Break)
+- `system.md` is the source of truth for the "Protocol".
+- User-defined prompts override/append to the list but System prompts (by ID) are protected/updated on build.
 
-1. **Manifest Handling**: Do **not** put `manifest.json` in `public/`. It lives in `apps/extension/` root and is processed by `vite.config.ts`.
-2. **TS Types**: Frontend `tsconfig` must include `"types": ["vite/client", "node"]` to support `import.meta.env` and Node modules in config.
-3. **Path Logic**: The backend _must_ handle path resolution. The frontend sends relative paths (e.g., `src/App.tsx`), backend joins with `process.env.PROJECT_ROOT`.
-4. **UX Polish**:
+5. **Manifest Injection**: `vite.config.ts` dynamically injects the backend `PORT` into CSP and Host Permissions during build.
 
-- **Tab Key** in FileSearch triggers autocomplete but keeps search active.
-- **Enter Key** on a folder-like string triggers `list_directory`.
+## 6. Development Workflow
+
+- **Start All**: `pnpm start` (Root)
+- **Backend Dev**: `cd apps/server && pnpm dev`
+- **Frontend Dev**: `cd apps/extension && pnpm dev`
