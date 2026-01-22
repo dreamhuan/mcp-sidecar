@@ -243,15 +243,16 @@ app.post("/api/invoke", async (req, res) => {
     // 🔥 处理 Internal Server
     if (serverName === "internal") {
       if (toolName === "list") {
-        // --- 新的 List 逻辑 ---
-        const targetServer = args?.server; // 从 args 获取参数
+        const targetServer = args?.server;
         const allTools = [];
 
+        // 🔥 修改：始终返回 description，只根据 detailed 决定是否返回 inputSchema
         const formatTool = (t: any, sName: string, detailed: boolean) => ({
           server: sName,
           name: t.name,
+          description: t.description || "", // ✅ 移到外面，始终可见
           ...(detailed
-            ? { description: t.description || "", inputSchema: t.inputSchema }
+            ? { inputSchema: t.inputSchema } // 只有 Schema 是按需加载的
             : {}),
         });
 

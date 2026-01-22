@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   AlertCircle,
   FolderTree,
+  Rocket,
 } from "lucide-react";
 import * as Toast from "@radix-ui/react-toast";
 import { cn } from "./lib/utils";
@@ -31,6 +32,15 @@ import systemPromptRaw from "./prompts/system.md?raw";
 
 // 配置快捷指令
 const ACTIONS: ActionItem[] = [
+  {
+    id: "initialize-context", // 特殊 ID
+    label: "Init Context",
+    server: "internal", // 这里只是占位，会被拦截
+    tool: "macro",
+    promptPrefix: "",
+    icon: <Rocket className="w-6 h-6 text-purple-500" />, // 紫色显眼
+    desc: "Protocol + Tools + Tree (One Click)",
+  },
   {
     id: "project-tree",
     label: "Copy Tree",
@@ -269,13 +279,33 @@ function App() {
               lines.push(`  ├─ 🛠️  ${t.name}`);
               if (t.description)
                 lines.push(`  │   Desc: ${t.description.replace(/\n/g, " ")}`);
+
               if (t.inputSchema) {
                 const props = t.inputSchema?.properties || {};
-                if (Object.keys(props).length > 0) {
+                const propKeys = Object.keys(props);
+                const required = new Set(t.inputSchema?.required || []); // 可选：获取必填字段列表
+
+                if (propKeys.length > 0) {
                   lines.push(`  │   Args:`);
-                  Object.keys(props).forEach((key) =>
-                    lines.push(`  │      └─ ${key}`),
-                  );
+                  propKeys.forEach((key) => {
+                    const prop = props[key];
+                    // 🔥 修改开始：构建详细的参数描述字符串
+                    let argStr = `  │      └─ ${key}`;
+
+                    // 1. 标记必填 (*)
+                    if (required.has(key)) argStr += "*";
+
+                    // 2. 显示类型 (type)
+                    if (prop.type) argStr += ` (${prop.type})`;
+
+                    // 3. 显示描述 (description)
+                    if (prop.description) {
+                      argStr += `: ${prop.description}`;
+                    }
+
+                    lines.push(argStr);
+                    // 🔥 修改结束
+                  });
                 }
               }
               lines.push(`  │`);
@@ -361,7 +391,83 @@ function App() {
     await handleRun(null, null, null, "", inputStr);
   };
 
+  // 🔥 2. 新增：聚合上下文生成逻辑
+  const generateFullContext = async () => {
+    setLoading(true);
+    try {
+      // Step A: 获取协议 (优先从当前加载的 Prompts 中找，找不到用默认)
+      const protocolPrompt =
+        prompts.find((p) => p.id === "init-protocol")?.content ||
+        "Protocol not found.";
+
+      // Step B: 获取工具列表 (调用后端 internal:list)
+      const listRes = await invokeAPI({
+        serverName: "internal",
+        toolName: "list",
+      });
+
+      let toolsSection = "";
+      if (listRes.success && Array.isArray(listRes.data)) {
+        // 简单格式化工具列表
+        const lines = ["## Available Tools"];
+        listRes.data.forEach((t: any) => {
+          // 格式: - mcp:server:tool (description)
+          lines.push(
+            `- \`mcp:${t.server}:${t.name}\`: ${t.description || "No description"}`,
+          );
+        });
+        toolsSection = lines.join("\n");
+      }
+
+      // Step C: 获取项目结构 (调用后端 internal:get_tree)
+      // 默认深度 3，这对 AI 理解上下文通常足够
+      const treeRes = await invokeAPI({
+        serverName: "internal",
+        toolName: "get_tree",
+        args: { root: ".", depth: 3 },
+      });
+      const treeSection = `## Project Structure\n\`\`\`\n${treeRes.data}\n\`\`\``;
+
+      // Step D: 组装终极 Prompt
+      const fullContext = [
+        "# System Context Initialization",
+        "",
+        "## Protocol & Instructions",
+        protocolPrompt,
+        "",
+        toolsSection,
+        "",
+        treeSection,
+        "",
+        "Ready for instructions.",
+      ].join("\n");
+
+      // Step E: 复制并提示
+      await navigator.clipboard.writeText(fullContext);
+      showToast(
+        "Context Ready!",
+        "Protocol, Tools & Tree copied to clipboard.",
+        "success",
+      );
+
+      // 同时也显示在预览区，方便查看
+      setResultPreview(fullContext);
+    } catch (e: any) {
+      showToast("Init Failed", e.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 🔥 3. 修改 Action 点击处理：拦截 initialize-context
   const handleActionClick = (act: ActionItem) => {
+    // 拦截特殊宏命令
+    if (act.id === "initialize-context") {
+      generateFullContext();
+      return;
+    }
+
+    // 常规逻辑
     // 1. 构造标准指令字符串 mcp:server:tool(args)
     const args = act.args || {};
     const hasArgs = Object.keys(args).length > 0;

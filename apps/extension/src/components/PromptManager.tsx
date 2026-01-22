@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { BookTemplate, Plus, Trash2, Edit2, X, Copy } from "lucide-react";
+import {
+  BookTemplate,
+  Plus,
+  Trash2,
+  Edit2,
+  X,
+  Copy,
+  AlertCircle, // 🔥 新增引用
+} from "lucide-react";
 import { PromptTemplate, ToastType } from "../types";
 
 interface PromptManagerProps {
@@ -20,6 +28,8 @@ export function PromptManager({
   const [editingPrompt, setEditingPrompt] = useState<PromptTemplate | null>(
     null,
   );
+  // 🔥 新增：记录正在请求删除的 ID
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -36,10 +46,17 @@ export function PromptManager({
     showToast("Saved Successfully", "Prompt template updated", "success");
   };
 
-  const deletePrompt = (id: string) => {
-    if (confirm("Are you sure you want to delete this prompt template?")) {
-      setPrompts(prompts.filter((p) => p.id !== id));
+  // 🔥 修改：不再直接删除，而是触发弹窗
+  const handleDeleteClick = (id: string) => {
+    setDeletingId(id);
+  };
+
+  // 🔥 新增：确认删除逻辑
+  const confirmDelete = () => {
+    if (deletingId) {
+      setPrompts(prompts.filter((p) => p.id !== deletingId));
       showToast("Deleted", "Template removed", "success");
+      setDeletingId(null);
     }
   };
 
@@ -54,7 +71,9 @@ export function PromptManager({
         className="absolute inset-0 bg-black/20 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div className="relative w-full max-w-md bg-white/90 backdrop-blur-xl rounded-[24px] shadow-2xl border border-white/50 p-6 flex flex-col max-h-[80vh]">
+
+      {/* 主卡片容器 */}
+      <div className="relative w-full max-w-md bg-white/90 backdrop-blur-xl rounded-[24px] shadow-2xl border border-white/50 p-6 flex flex-col max-h-[80vh] overflow-hidden">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-slate-800">Prompt Templates</h2>
           <button
@@ -147,7 +166,6 @@ export function PromptManager({
                       </p>
                     </div>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {/* 🔥 新增：列表项里的复制按钮 */}
                       <button
                         onClick={() => copyContent(p.content)}
                         title="Copy prompt"
@@ -162,7 +180,7 @@ export function PromptManager({
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
                       <button
-                        onClick={() => deletePrompt(p.id)}
+                        onClick={() => handleDeleteClick(p.id)} // 🔥 修改调用
                         className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -185,6 +203,41 @@ export function PromptManager({
               <Plus className="w-4 h-4" />
               Create New Template
             </button>
+          </div>
+        )}
+
+        {/* 🔥🔥🔥 新增：内部删除确认弹窗 Overlay 🔥🔥🔥 */}
+        {deletingId && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 backdrop-blur-[2px] animate-in fade-in duration-200 rounded-[24px]">
+            <div className="w-[85%] bg-white rounded-xl shadow-2xl border border-slate-100 p-5 transform transition-all animate-in zoom-in-95 duration-200">
+              <div className="flex flex-col items-center text-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center">
+                  <AlertCircle className="w-5 h-5 text-red-500" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold text-slate-800">
+                    Delete Template?
+                  </h3>
+                  <p className="text-xs text-slate-500 leading-relaxed px-2">
+                    Are you sure you want to remove this?
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 w-full mt-2">
+                  <button
+                    onClick={() => setDeletingId(null)}
+                    className="flex-1 py-2 px-3 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmDelete}
+                    className="flex-1 py-2 px-3 rounded-lg bg-red-500 text-xs font-semibold text-white shadow-sm hover:bg-red-600 transition-colors"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>
