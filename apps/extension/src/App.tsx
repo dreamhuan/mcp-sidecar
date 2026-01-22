@@ -12,11 +12,12 @@ import { FileSearch, type FileSearchRef } from "./components/FileSearch";
 import { PromptManager } from "./components/PromptManager";
 import { ResultPreview } from "./components/ResultPreview";
 import { QuickActions } from "./components/QuickActions";
-import { CommandBar } from "./components/CommandBar";
+// 🔥 引入 CommandBarRef 类型
+import { CommandBar, type CommandBarRef } from "./components/CommandBar";
+import { ServerShortcuts } from "./components/ServerShortcuts";
 import { ActionItem, PromptTemplate, ToastType } from "./types";
 import { API_BASE_URL } from "./common";
 
-// 配置：移除 "List Files"，只保留 Git Diff
 const ACTIONS: ActionItem[] = [
   {
     id: "git-diff",
@@ -33,13 +34,16 @@ const ACTIONS: ActionItem[] = [
 function App() {
   const [loading, setLoading] = useState(false);
   const [resultPreview, setResultPreview] = useState("");
-  const searchRef = useRef<FileSearchRef>(null);
+  // 存储探测到的 Server 列表
+  const [availableServers, setAvailableServers] = useState<string[]>([]);
 
-  // 提示词状态
+  const searchRef = useRef<FileSearchRef>(null);
+  // 🔥 新增：引用 CommandBar 实例
+  const commandBarRef = useRef<CommandBarRef>(null);
+
   const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
   const [isPromptMgrOpen, setIsPromptMgrOpen] = useState(false);
 
-  // Toast 状态
   const [open, setOpen] = useState(false);
   const [toastConfig, setToastConfig] = useState({
     title: "",
@@ -63,7 +67,6 @@ function App() {
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
-  // 本地存储加载/保存
   useEffect(() => {
     const saved = localStorage.getItem("mcp-prompts");
     if (saved) {
@@ -79,7 +82,6 @@ function App() {
     localStorage.setItem("mcp-prompts", JSON.stringify(prompts));
   }, [prompts]);
 
-  // 🔥 核心执行逻辑
   const handleRun = async (
     serverName: string | null,
     toolName: string | null,
@@ -106,7 +108,16 @@ function App() {
       if (json.success) {
         let contentStr = "";
 
+        // 🔥 解析 Server 列表逻辑
         if (json.isToolList && Array.isArray(json.data)) {
+          // 使用 Set 进行合并，防止覆盖
+          const newServers = json.data.map((t: any) => t.server);
+          setAvailableServers((prev) => {
+            const combined = new Set([...prev, ...newServers]);
+            return Array.from(combined).sort();
+          });
+
+          // 列表渲染逻辑
           const grouped: Record<string, any[]> = {};
           json.data.forEach((t: any) => {
             if (!grouped[t.server]) grouped[t.server] = [];
@@ -114,35 +125,33 @@ function App() {
           });
 
           const lines: string[] = [];
-          lines.push("📦 AVAILABLE MCP TOOLS (With Arguments)\n");
+          const isDetailed =
+            json.data.length > 0 && "inputSchema" in json.data[0];
+
+          lines.push(
+            isDetailed
+              ? "📦 MCP TOOLS DETAILS (Full Schema)\n"
+              : "📦 MCP TOOLS SUMMARY (Names Only)\n",
+          );
+
+          if (!isDetailed) {
+            lines.push("Tip: Click suggested commands above to see details.\n");
+          }
 
           for (const [server, tools] of Object.entries(grouped)) {
             lines.push(`SERVER: ${server}`);
             tools.forEach((t: any) => {
               lines.push(`  ├─ 🛠️  ${t.name}`);
+              if (t.description)
+                lines.push(`  │   Desc: ${t.description.replace(/\n/g, " ")}`);
 
-              if (t.description) {
-                lines.push(`  │   Description: ${t.description}`);
-              }
-
-              const props = t.inputSchema?.properties || {};
-              const required = t.inputSchema?.required || [];
-              const propKeys = Object.keys(props);
-
-              if (propKeys.length > 0) {
-                lines.push(`  │   Args:`);
-                propKeys.forEach((key, idx) => {
-                  const p = props[key];
-                  const reqMark = required.includes(key)
-                    ? "(Required)"
-                    : "(Optional)";
-                  const desc = p.description ? ` - ${p.description}` : "";
-                  lines.push(
-                    `  │      └─ ${key} [${p.type}] ${reqMark}${desc}`,
-                  );
-                });
-              } else {
-                lines.push(`  │   Args: (None)`);
+              if (t.inputSchema) {
+                const props = t.inputSchema?.properties || {};
+                const propKeys = Object.keys(props);
+                if (propKeys.length > 0) {
+                  lines.push(`  │   Args:`);
+                  propKeys.forEach((key) => lines.push(`  │      └─ ${key}`));
+                }
               }
               lines.push(`  │`);
             });
@@ -167,11 +176,9 @@ function App() {
         }
 
         contentStr = contentStr.replace(/`/g, "'");
-
         const finalResult = promptPrefix
           ? `${promptPrefix}${contentStr}`
           : contentStr;
-
         setResultPreview(finalResult);
 
         try {
@@ -194,15 +201,16 @@ function App() {
     }
   };
 
+  // 🔥 核心修改：通过 Ref 控制 CommandBar 的输入框
   const handleCommandExecute = async (cmd: string) => {
+    // 1. 命令上屏 (Imperative)
+    commandBarRef.current?.setValue(cmd);
+    // 2. 执行逻辑
     await handleRun(null, null, null, "", cmd);
   };
 
   const handleActionClick = (act: ActionItem) => {
-    let args = act.args || {};
-    let promptPrefix = act.promptPrefix;
-    // 移除原有的 ls 特殊逻辑
-    handleRun(act.server, act.tool, args, promptPrefix);
+    handleRun(act.server, act.tool, act.args || {}, act.promptPrefix);
   };
 
   return (
@@ -234,18 +242,26 @@ function App() {
           <button
             onClick={() => setIsPromptMgrOpen(true)}
             className="flex items-center gap-2 px-3 py-2 rounded-[14px] bg-white shadow-sm border border-slate-200/60 text-slate-600 hover:text-blue-600 hover:border-blue-200 hover:shadow-md active:scale-95 transition-all duration-200 group"
-            title="Manage Prompt Templates"
           >
             <BookTemplate className="w-4 h-4 group-hover:scale-110 transition-transform" />
             <span className="text-[13px] font-semibold">Templates</span>
           </button>
         </header>
 
-        <section className="animate-in fade-in slide-in-from-top-4 duration-500">
+        {/* Command Area */}
+        <section className="animate-in fade-in slide-in-from-top-4 duration-500 flex flex-col gap-0">
           <CommandBar
+            // 🔥 绑定 Ref
+            ref={commandBarRef}
             onExecute={handleCommandExecute}
             loading={loading}
             showToast={showToast}
+          />
+
+          <ServerShortcuts
+            servers={availableServers}
+            onSelect={handleCommandExecute}
+            loading={loading}
           />
         </section>
 
@@ -256,7 +272,6 @@ function App() {
         />
 
         <section>
-          {/* ✅ 修改：重命名 Title */}
           <h2 className="text-[13px] font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1">
             Project Explorer
           </h2>
@@ -282,7 +297,6 @@ function App() {
           prompts={prompts}
           showToast={showToast}
         />
-
         <PromptManager
           isOpen={isPromptMgrOpen}
           onClose={() => setIsPromptMgrOpen(false)}
@@ -317,7 +331,6 @@ function App() {
               <CheckCircle2 className="w-5 h-5" />
             )}
           </div>
-
           <div className="flex-1 pt-0.5">
             <Toast.Title className="text-[14px] font-bold leading-none mb-1">
               {toastConfig.title}

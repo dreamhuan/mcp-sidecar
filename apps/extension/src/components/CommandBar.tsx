@@ -1,16 +1,35 @@
-import { useState } from "react";
-import { Wand2, Play, Loader2, Clipboard } from "lucide-react";
+import { useState, useImperativeHandle, type Ref } from "react";
+import { Wand2, Play, Loader2 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { ToastType } from "../types";
+
+// 🔥 定义暴露给父组件的 Ref 方法
+export interface CommandBarRef {
+  setValue: (value: string) => void;
+  getValue: () => string;
+}
 
 interface CommandBarProps {
   onExecute: (command: string) => Promise<void>;
   loading: boolean;
   showToast: (title: string, desc: string, type: ToastType) => void;
+  // React 19 中 ref 可以直接作为 prop 传递
+  ref?: Ref<CommandBarRef>;
 }
 
-export function CommandBar({ onExecute, loading, showToast }: CommandBarProps) {
+export function CommandBar({
+  onExecute,
+  loading,
+  showToast,
+  ref,
+}: CommandBarProps) {
   const [command, setCommand] = useState("");
+
+  // 🔥 暴露方法给外部使用
+  useImperativeHandle(ref, () => ({
+    setValue: (val: string) => setCommand(val),
+    getValue: () => command,
+  }));
 
   // 🪄 Magic Grab: Read from Clipboard
   const handleMagicGrab = async () => {
@@ -65,7 +84,6 @@ export function CommandBar({ onExecute, loading, showToast }: CommandBarProps) {
           className="p-2 rounded-[10px] bg-gradient-to-br from-indigo-50 to-purple-50 text-indigo-600 hover:from-indigo-100 hover:to-purple-100 hover:scale-105 active:scale-95 transition-all border border-indigo-100/50"
           title="Paste from Clipboard"
         >
-          {/* 这里换成了 Wand2，你也可以换成 Clipboard 图标，看你喜好 */}
           <Wand2 className="w-4 h-4" />
         </button>
 
@@ -74,7 +92,7 @@ export function CommandBar({ onExecute, loading, showToast }: CommandBarProps) {
           type="text"
           value={command}
           onChange={(e) => setCommand(e.target.value)}
-          placeholder="mcp:list or mcp:server:tool({...})"
+          placeholder="mcp:server:tool({...})"
           className="flex-1 bg-transparent border-none outline-none text-[13px] font-mono text-slate-700 placeholder:text-slate-400/60 h-9 px-1"
         />
 

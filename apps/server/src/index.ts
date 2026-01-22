@@ -9,7 +9,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import dotenv from "dotenv";
 
-// 1. 加载根目录 .env (假设 server 在 apps/server，.env 在根目录，即 ../../.env)
+// 1. 加载根目录 .env
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 
 const execAsync = promisify(exec);
@@ -18,7 +18,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- 配置区域 (从环境变量读取) ---
+// --- 配置区域 ---
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
 const PROJECT_ROOT =
   process.env.PROJECT_ROOT || path.resolve(__dirname, "../../../");
@@ -30,29 +30,27 @@ const mcpClients = new Map<string, Client>();
 
 // --- 辅助函数 ---
 
-// 🔥 新增：加载并解析 mcp.config.json
 async function loadMcpConfig() {
   try {
     const configPath = path.resolve(__dirname, "../../../mcp.config.json");
     const rawData = await fs.readFile(configPath, "utf-8");
-
-    // 简单的变量替换：将配置文件中的 ${PROJECT_ROOT} 替换为实际环境变量
     const configStr = rawData.replace(/\$\{PROJECT_ROOT\}/g, PROJECT_ROOT);
-
     return JSON.parse(configStr);
   } catch (error) {
     console.error("❌ Failed to load mcp.config.json:", error);
-    return {}; // 返回空对象防止崩溃
+    return {};
   }
 }
 
+// 解析命令，支持无参数时不加括号
+// 匹配模式：mcp:server:tool 后面可选 (args)
 function parseMcpCommand(command: string) {
-  const regex = /^mcp:([^:]+):([^(]+)\((.*)\)$/;
+  const regex = /^mcp:([^:]+):([^(]+?)(?:\((.*)\))?$/;
   const match = command.trim().match(regex);
 
   if (!match) {
     throw new Error(
-      "Invalid command format. Expected: mcp:server:tool(json_args)",
+      "Invalid command format. Expected: mcp:server:tool or mcp:server:tool(json_args)",
     );
   }
 
@@ -60,12 +58,18 @@ function parseMcpCommand(command: string) {
 
   let args = {};
   try {
-    args = argsStr.trim() ? JSON.parse(argsStr) : {};
+    if (argsStr && argsStr.trim()) {
+      args = JSON.parse(argsStr);
+    }
   } catch (e) {
     throw new Error(`Invalid JSON arguments: ${argsStr}`);
   }
 
-  return { serverName, toolName, args };
+  return {
+    serverName: serverName.trim(),
+    toolName: toolName.trim(),
+    args,
+  };
 }
 
 async function listFilesWithTypes(dirPath: string) {
@@ -97,7 +101,6 @@ async function handleGitTool(toolName: string, args: any) {
 }
 
 const connectMcp = async () => {
-  // 🔥 动态加载配置
   const mcpServers = await loadMcpConfig();
 
   for (const [name, config] of Object.entries(mcpServers) as [string, any][]) {
@@ -108,7 +111,7 @@ const connectMcp = async () => {
         transport = new StreamableHTTPClientTransport(config.url);
       } else {
         console.log(
-          `🔌 [${name}] Spawning process: ${config.command} ${(config.args || []).join(" ")}`,
+          `🔌 [${name}] Spawning: ${config.command} ${(config.args || []).join(" ")}`,
         );
         transport = new StdioClientTransport({
           command: config.command!,
@@ -118,11 +121,7 @@ const connectMcp = async () => {
 
       const client = new Client(
         { name: "mcp-sidecar-server", version: "1.0.0" },
-        {
-          // 🔥 修复点：Client 不应该声明 prompts/resources/tools
-          // 如果不需要特殊能力（如 sampling 或 roots），留空即可
-          capabilities: {},
-        },
+        { capabilities: {} },
       );
 
       await client.connect(transport);
@@ -140,53 +139,74 @@ app.post("/api/invoke", async (req, res) => {
   let { serverName, toolName, args, command } = req.body;
 
   try {
-    if (command && command.trim() === "mcp:list") {
+    // 🔥 场景 1: mcp:list (及 mcp:list:xxx)
+    if (command && command.trim().startsWith("mcp:list")) {
+      const parts = command.trim().split(":");
+      const targetServer = parts[2]; // mcp:list:git -> git
+
       const allTools = [];
+      const gitTools = [
+        { name: "diff", description: "Show changes", inputSchema: {} },
+        { name: "status", description: "Show status", inputSchema: {} },
+      ];
 
-      for (const [sName, client] of mcpClients.entries()) {
-        try {
+      // 🔥 格式化器优化：摘要模式下完全移除 description
+      const formatTool = (t: any, sName: string, detailed: boolean) => ({
+        server: sName,
+        name: t.name,
+        // 仅在详细模式下返回 description 和 inputSchema
+        ...(detailed
+          ? {
+              description: t.description || "",
+              inputSchema: t.inputSchema,
+            }
+          : {}),
+      });
+
+      if (targetServer) {
+        // --- 详情模式 (Specific Server) ---
+        if (targetServer === "git") {
+          allTools.push(...gitTools.map((t) => formatTool(t, "git", true)));
+        } else {
+          const client = mcpClients.get(targetServer);
+          if (!client)
+            return res
+              .status(404)
+              .json({ success: false, error: "Server not found" });
+
           const result = await client.listTools();
-          const tools = result.tools.map((t) => ({
-            server: sName,
-            name: t.name,
-            description: (t.description || "(No description)").replace(
-              /\n/g,
-              " ",
-            ),
-            inputSchema: t.inputSchema,
-          }));
-          allTools.push(...tools);
-        } catch (e) {
-          console.error(`Failed to list tools for ${sName}`, e);
+          allTools.push(
+            ...result.tools.map((t) => formatTool(t, targetServer, true)),
+          );
         }
+      } else {
+        // --- 摘要模式 (All Servers, Names Only) ---
+        for (const [sName, client] of mcpClients.entries()) {
+          try {
+            const result = await client.listTools();
+            allTools.push(
+              ...result.tools.map((t) => formatTool(t, sName, false)),
+            );
+          } catch (e) {
+            allTools.push({ server: sName, name: `Error: ${e}` });
+          }
+        }
+        allTools.push(...gitTools.map((t) => formatTool(t, "git", false)));
       }
-
-      allTools.push(
-        {
-          server: "git",
-          name: "diff",
-          description: "Show changes between commits",
-          inputSchema: {},
-        },
-        {
-          server: "git",
-          name: "status",
-          description: "Show the working tree status",
-          inputSchema: {},
-        },
-      );
 
       return res.json({ success: true, data: allTools, isToolList: true });
     }
 
+    // 🔥 场景 2: 通用执行
     if (command) {
       const parsed = parseMcpCommand(command);
       serverName = parsed.serverName;
       toolName = parsed.toolName;
       args = parsed.args;
-      console.log(`[Command] Parsed: ${serverName} -> ${toolName}`, args);
+      console.log(`[Command] Parsed: ${serverName}:${toolName}`, args);
     }
 
+    // --- 执行逻辑 ---
     let resultData: any = "";
 
     if (serverName === "fs" && toolName === "list_directory") {
@@ -203,11 +223,7 @@ app.post("/api/invoke", async (req, res) => {
 
       if (serverName === "fs" && args && typeof args.path === "string") {
         if (!path.isAbsolute(args.path)) {
-          const originalPath = args.path;
-          args.path = path.join(PROJECT_ROOT, originalPath);
-          console.log(
-            `[Path Fix] Resolved '${originalPath}' -> '${args.path}'`,
-          );
+          args.path = path.join(PROJECT_ROOT, args.path);
         }
       }
 
