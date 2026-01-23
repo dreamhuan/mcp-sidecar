@@ -336,10 +336,23 @@ app.post("/api/invoke", async (req, res) => {
         name: toolName,
         arguments: args || {},
       });
-      // @ts-ignore
-      resultData =
-        (result.content as any[]).find((c) => c.type === "text")?.text ||
-        JSON.stringify(result);
+      // console.log("=====mcp call", serverName, toolName, "\n", result);
+
+      // 提取所有文本块并拼接
+      const content = (result.content as any[]) || [];
+
+      // 1. 过滤出所有 type 为 'text' 的项
+      const textBlocks = content
+        .filter((c) => c.type === "text")
+        .map((c) => c.text);
+
+      // 2. 如果有文本内容，用换行符连接它们
+      if (textBlocks.length > 0) {
+        resultData = textBlocks.join("\n\n");
+      } else {
+        // 3. 如果没有文本（比如是图片或二进制），或者由其他格式组成，兜底显示 JSON
+        resultData = JSON.stringify(result, null, 2);
+      }
     }
 
     res.json({ success: true, data: resultData });

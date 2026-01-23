@@ -391,8 +391,11 @@ function App() {
     await handleRun(null, null, null, "", inputStr);
   };
 
-  // 🔥 2. 新增：聚合上下文生成逻辑
+  // 🔥 修改：聚合上下文生成逻辑
   const generateFullContext = async () => {
+    // 1. 立即清空指令区，提供视觉反馈
+    commandBarRef.current?.setValue("");
+
     setLoading(true);
     try {
       // Step A: 获取协议 (优先从当前加载的 Prompts 中找，找不到用默认)
