@@ -15,6 +15,7 @@ interface ExecutionPlanProps {
   onCancel: () => void;
   isExecuting: boolean;
   progress: number; // 当前执行到第几个
+  failedIndex: number | null; // 🔥 新增：标记出错的索引
 }
 
 export function ExecutionPlan({
@@ -23,6 +24,7 @@ export function ExecutionPlan({
   onCancel,
   isExecuting,
   progress,
+  failedIndex, // 🔥 解构
 }: ExecutionPlanProps) {
   // 区分读取和写入，给写入操作加警告色
   const getIcon = (cmd: ParsedCommand) => {
@@ -34,10 +36,24 @@ export function ExecutionPlan({
   };
 
   const getStatusIcon = (idx: number) => {
-    if (idx < progress) return <Check className="w-4 h-4 text-emerald-500" />;
-    if (idx === progress && isExecuting)
+    // 🔥 优先判断是否是失败的那一行
+    if (failedIndex !== null && idx === failedIndex) {
+      return <XCircle className="w-4 h-4 text-red-500 animate-pulse" />;
+    }
+
+    // 如果还没有执行到这里
+    if (idx > progress) return getIcon(commands[idx]);
+
+    // 如果是当前行，且正在执行中 (且没有报错)
+    if (idx === progress && isExecuting && failedIndex === null)
       return <Loader2 className="w-4 h-4 animate-spin text-blue-500" />;
-    return null;
+
+    // 剩下的就是已完成的 (idx < progress) 或者是当前行但已经结束
+    if (idx < progress) {
+      return <Check className="w-4 h-4 text-emerald-500" />;
+    }
+
+    return getIcon(commands[idx]);
   };
 
   return (
@@ -47,73 +63,101 @@ export function ExecutionPlan({
           <Play className="w-3.5 h-3.5" />
           Execution Plan ({commands.length})
         </h3>
-        {isExecuting && (
-          <span className="text-[12px] font-mono text-slate-500">
-            {progress} / {commands.length}
+        {(isExecuting || failedIndex !== null) && (
+          <span
+            className={cn(
+              "text-[12px] font-mono",
+              failedIndex !== null
+                ? "text-red-500 font-bold"
+                : "text-slate-500",
+            )}
+          >
+            {failedIndex !== null
+              ? "FAILED"
+              : `${progress} / ${commands.length}`}
           </span>
         )}
       </div>
 
       <div className="max-h-[300px] overflow-y-auto p-2 space-y-1">
-        {commands.map((cmd, idx) => (
-          <div
-            key={idx}
-            className={cn(
-              "flex items-start gap-3 p-3 rounded-lg border text-[13px] transition-all",
-              idx === progress && isExecuting
-                ? "bg-blue-50 border-blue-200"
-                : "bg-white border-slate-100",
-              !cmd.isValid && "bg-red-50 border-red-100",
-            )}
-          >
-            <div className="mt-0.5 shrink-0">
-              {isExecuting ? getStatusIcon(idx) || getIcon(cmd) : getIcon(cmd)}
-            </div>
+        {commands.map((cmd, idx) => {
+          // 判断是否是错误行，用于背景染色
+          const isFailed = failedIndex === idx;
+          const isCurrent = idx === progress && isExecuting && !isFailed;
 
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-slate-700">{cmd.tool}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-mono">
-                  {cmd.server}
-                </span>
-              </div>
-
-              {/* 参数预览 */}
-              <div className="mt-1 font-mono text-[11px] text-slate-500 break-all leading-relaxed opacity-80">
-                {JSON.stringify(cmd.args).slice(0, 100)}
-                {JSON.stringify(cmd.args).length > 100 && "..."}
-              </div>
-
-              {!cmd.isValid && (
-                <div className="mt-1 text-red-500 text-[11px] font-medium">
-                  Invalid JSON arguments
-                </div>
+          return (
+            <div
+              key={idx}
+              className={cn(
+                "flex items-start gap-3 p-3 rounded-lg border text-[13px] transition-all",
+                isCurrent ? "bg-blue-50 border-blue-200" : "",
+                isFailed ? "bg-red-50 border-red-200 ring-1 ring-red-200" : "", // 🔥 错误红框
+                !isCurrent && !isFailed ? "bg-white border-slate-100" : "",
+                !cmd.isValid && "bg-red-50 border-red-100",
               )}
+            >
+              <div className="mt-0.5 shrink-0">
+                {/* 始终调用 getStatusIcon 来动态显示状态 */}
+                {getStatusIcon(idx)}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      "font-bold",
+                      isFailed ? "text-red-700" : "text-slate-700",
+                    )}
+                  >
+                    {cmd.tool}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-mono">
+                    {cmd.server}
+                  </span>
+                </div>
+
+                {/* 参数预览 */}
+                <div className="mt-1 font-mono text-[11px] text-slate-500 break-all leading-relaxed opacity-80">
+                  {JSON.stringify(cmd.args).slice(0, 100)}
+                  {JSON.stringify(cmd.args).length > 100 && "..."}
+                </div>
+
+                {!cmd.isValid && (
+                  <div className="mt-1 text-red-500 text-[11px] font-medium">
+                    Invalid JSON arguments
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="p-3 bg-white border-t border-slate-100 flex gap-2">
         <button
           onClick={onCancel}
-          disabled={isExecuting}
+          // 只有正在执行且没出错时才禁用取消（防止执行一半卡住）
+          disabled={isExecuting && failedIndex === null}
           className="flex-1 py-2 rounded-xl text-[13px] font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
         >
-          Cancel
+          {failedIndex !== null ? "Close" : "Cancel"}
         </button>
-        <button
-          onClick={onConfirm}
-          disabled={isExecuting || commands.some((c) => !c.isValid)}
-          className={cn(
-            "flex-[2] py-2 rounded-xl text-[13px] font-bold text-white shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100",
-            commands.some((c) => c.tool.includes("write"))
-              ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600" // 写入操作用橙色警示
-              : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700",
-          )}
-        >
-          {isExecuting ? "Executing..." : `Run ${commands.length} Commands`}
-        </button>
+
+        {/* 如果出错了，隐藏 Run 按钮，强制用户先 Close/Cancel */}
+        {failedIndex === null && (
+          <button
+            onClick={onConfirm}
+            disabled={isExecuting || commands.some((c) => !c.isValid)}
+            className={cn(
+              "flex-[2] py-2 rounded-xl text-[13px] font-bold text-white shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100",
+              commands.some((c) => c.tool.includes("write"))
+                ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600" // 写入操作用橙色警示
+                : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700",
+            )}
+          >
+            {isExecuting ? "Executing..." : `Run ${commands.length} Commands`}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -99,6 +99,7 @@ function App() {
   // --- Batch Execution State ---
   const [pendingCommands, setPendingCommands] = useState<ParsedCommand[]>([]);
   const [executionProgress, setExecutionProgress] = useState(0);
+  const [failedIndex, setFailedIndex] = useState<number | null>(null); // 🔥 新增：失败状态
 
   // --- Refs ---
   const searchRef = useRef<FileSearchRef>(null);
@@ -155,7 +156,6 @@ function App() {
   }, []);
 
   // 保存逻辑保持不变，它会将合并后的结果存回去
-  // 这样下次加载时，逻辑依然有效（先剔除旧系统模板，再插入新系统模板）
   useEffect(() => {
     if (prompts.length > 0) {
       localStorage.setItem("mcp-prompts", JSON.stringify(prompts));
@@ -178,10 +178,14 @@ function App() {
   const handleBatchExecution = async () => {
     setLoading(true);
     setExecutionProgress(0);
+    setFailedIndex(null); // 重置失败状态
     const results: string[] = [];
 
     try {
       for (let i = 0; i < pendingCommands.length; i++) {
+        // 更新进度 UI：当前正在执行第 i 个
+        setExecutionProgress(i);
+
         const cmd = pendingCommands[i];
 
         // 执行单个命令
@@ -191,42 +195,60 @@ function App() {
           args: cmd.args,
         });
 
-        // 更新进度 UI
-        setExecutionProgress(i + 1);
-
         // 格式化结果
         let output = "";
+
+        // 🔥🔥🔥 核心修复：检查业务逻辑是否成功
         if (json.success) {
           if (typeof json.data === "string") output = json.data;
           else output = JSON.stringify(json.data, null, 2);
-        } else {
-          output = `Error: ${json.error}`;
-        }
 
-        // 添加分割线和标题，方便 AI 阅读
-        results.push(
-          `### [CMD] ${cmd.tool} (Args: ${JSON.stringify(cmd.args)})\n${output}\n`,
-        );
+          results.push(
+            `### [CMD] ${cmd.tool} (Args: ${JSON.stringify(cmd.args)})\n${output}\n`,
+          );
+
+          // 如果成功，进度加 1，准备进入下一次循环
+          // 只有全部成功，最后 progress 才会等于 length
+          setExecutionProgress(i + 1);
+        } else {
+          // 🔥 发现错误，停止执行
+          output = `Error: ${json.error}`;
+
+          results.push(`### [CMD FAILED] ${cmd.tool}\nERROR: ${json.error}\n`);
+
+          // 标记当前索引为失败
+          setFailedIndex(i);
+
+          showToast("Batch Stopped", `Command '${cmd.tool}' failed.`, "error");
+
+          // 关键：跳出循环，不再执行后续指令
+          break;
+        }
       }
 
       // 合并结果
       const finalReport = results.join("\n" + "=".repeat(40) + "\n\n");
       setResultPreview(finalReport);
 
-      // 自动复制
+      // 无论成功还是中途失败，都把当前的报告复制出去
       try {
         await navigator.clipboard.writeText(finalReport);
-        showToast(
-          "Batch Complete",
-          "All results copied to clipboard",
-          "success",
-        );
+        if (failedIndex === null) {
+          showToast(
+            "Batch Complete",
+            "All results copied to clipboard",
+            "success",
+          );
+        }
       } catch (e) {
         showToast("Batch Complete", "Results ready (Copy failed)", "success");
       }
 
-      // 清空计划
-      setPendingCommands([]);
+      // 🔥 修改：只有在完全成功时才清空 plan
+      // 如果失败了，保留 pendingCommands，让用户看到是哪一个红了
+      if (failedIndex === null) {
+        setPendingCommands([]);
+      }
     } catch (e: any) {
       showToast("Batch Error", e.message, "error");
     } finally {
@@ -293,7 +315,7 @@ function App() {
               if (t.inputSchema) {
                 const props = t.inputSchema?.properties || {};
                 const propKeys = Object.keys(props);
-                const required = new Set(t.inputSchema?.required || []); // 可选：获取必填字段列表
+                const required = new Set(t.inputSchema?.required || []);
 
                 if (propKeys.length > 0) {
                   lines.push(`  │   Args:`);
@@ -361,7 +383,10 @@ function App() {
           showToast("Executed", "Result displayed (Copy failed)", "success");
         }
       } else {
+        // 后端返回 success: false (例如 500 错误)
         showToast("Execution Failed", json.error || "Unknown error", "error");
+        // 也可以在预览区显示错误
+        setResultPreview(`❌ EXECUTION FAILED:\n${json.error}`);
       }
     } catch (e) {
       showToast("Connection Failed", "Please check local service", "error");
@@ -393,6 +418,9 @@ function App() {
 
       // 场景 B: 多个指令 OR 包含副作用(write)的指令 -> 进入 Execution Plan
       setPendingCommands(commands);
+      // 🔥 重置状态，确保新的 Plan 是干净的
+      setFailedIndex(null);
+      setExecutionProgress(0);
       return;
     }
 
@@ -648,8 +676,13 @@ function App() {
                 commands={pendingCommands}
                 isExecuting={loading}
                 progress={executionProgress}
+                failedIndex={failedIndex} // 🔥 传递 Prop
                 onConfirm={handleBatchExecution}
-                onCancel={() => setPendingCommands([])}
+                onCancel={() => {
+                  setPendingCommands([]);
+                  setFailedIndex(null);
+                  setExecutionProgress(0);
+                }}
               />
             ) : (
               <ServerShortcuts

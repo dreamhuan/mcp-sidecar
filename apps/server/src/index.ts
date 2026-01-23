@@ -401,31 +401,54 @@ app.post("/api/invoke", async (req, res) => {
       const client = mcpClients.get(serverName);
       if (!client) throw new Error(`Server '${serverName}' not active`);
 
+      // 1. 拦截 FS 操作：路径补全 & 自动创建目录
       if (serverName === "fs" && args && typeof args.path === "string") {
         if (!path.isAbsolute(args.path)) {
           args.path = path.join(PROJECT_ROOT, args.path);
         }
+        // 自动创建父目录 (mkdir -p)
+        if (toolName === "write_file") {
+          const parentDir = path.dirname(args.path);
+          try {
+            await fs.mkdir(parentDir, { recursive: true });
+          } catch (e: any) {
+            // 仅警告，继续尝试写入，让 fs server 报出具体的权限错误
+            console.warn(
+              `⚠️ Warning: Failed to pre-create directory: ${e.message}`,
+            );
+          }
+        }
       }
 
+      // 2. 调用 MCP 工具
       const result = await client.callTool({
         name: toolName,
         arguments: args || {},
       });
-      // console.log("=====mcp call", serverName, toolName, "\n", result);
+      console.log("=====mcp call", serverName, toolName, "\n", result);
 
-      // 提取所有文本块并拼接
+      // 🔥🔥🔥 核心修复：检查 MCP 协议层面的错误标记 🔥🔥🔥
+      if (result.isError) {
+        // 提取错误信息
+        const errorContent = (result.content as any[]) || [];
+        const errorMessage = errorContent
+          .filter((c) => c.type === "text")
+          .map((c) => c.text)
+          .join("\n");
+
+        // 主动抛出异常，触发外层 catch，从而返回 500 给前端
+        throw new Error(errorMessage || "Unknown MCP Tool Error");
+      }
+
+      // 3. 处理成功结果
       const content = (result.content as any[]) || [];
-
-      // 1. 过滤出所有 type 为 'text' 的项
       const textBlocks = content
         .filter((c) => c.type === "text")
         .map((c) => c.text);
 
-      // 2. 如果有文本内容，用换行符连接它们
       if (textBlocks.length > 0) {
         resultData = textBlocks.join("\n\n");
       } else {
-        // 3. 如果没有文本（比如是图片或二进制），或者由其他格式组成，兜底显示 JSON
         resultData = JSON.stringify(result, null, 2);
       }
     }
