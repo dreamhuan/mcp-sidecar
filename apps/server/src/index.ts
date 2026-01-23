@@ -323,19 +323,32 @@ app.post("/api/invoke", async (req, res) => {
         const { stdout } = await execAsync("git status", { cwd: PROJECT_ROOT });
         resultData = stdout;
       } else if (toolName === "git_changed_files") {
-        // 获取未暂存和已暂存的变更文件
-        const { stdout } = await execAsync("git diff --name-only HEAD", {
-          cwd: PROJECT_ROOT,
-        });
-        // 按行分割，过滤空行
-        const files = stdout
-          .split("\n")
-          .map((f) => f.trim())
-          .filter((f) => f.length > 0);
-        resultData = files; // 直接返回数组，方便前端处理
-        // 注意：如果你的 invokeAPI 统一返回 string，这里可能需要 JSON.stringify(files)
-        // 或者保持你的架构统一，让前端去解析 JSON
-        return res.json({ success: true, data: files });
+        // 1. 获取已追踪文件的变更 (修改 + 暂存 + 删除)
+        const { stdout: diffOut } = await execAsync(
+          "git diff --name-only HEAD",
+          { cwd: PROJECT_ROOT },
+        );
+
+        // 2. 获取未追踪文件 (Untracked / New files)，排除 .gitignore
+        const { stdout: untrackedOut } = await execAsync(
+          "git ls-files --others --exclude-standard",
+          { cwd: PROJECT_ROOT },
+        );
+
+        // 3. 合并并去重
+        const allFiles = new Set([
+          ...diffOut
+            .split("\n")
+            .map((f) => f.trim())
+            .filter((f) => f),
+          ...untrackedOut
+            .split("\n")
+            .map((f) => f.trim())
+            .filter((f) => f),
+        ]);
+
+        // 返回数组
+        return res.json({ success: true, data: Array.from(allFiles) });
       }
       // 🔥 新增：获取单个文件的 Diff
       else if (toolName === "get_file_diff") {
@@ -343,12 +356,7 @@ app.post("/api/invoke", async (req, res) => {
         if (!targetPath) throw new Error("Path is required");
 
         try {
-          // 优化 1: 先检查文件状态
-          // 如果是新文件(A) 或 未追踪(Untracked)，git diff HEAD 可能没输出，或者报错
-          // 我们尝试两个命令：
-          // 1. git diff HEAD -- <file> (针对已提交过的文件的修改)
-          // 2. 如果没输出，可能是新文件，直接提示 "New File"
-
+          // 尝试获取 Diff
           const { stdout } = await execAsync(
             `git diff HEAD -- "${targetPath}"`,
             {
@@ -357,25 +365,21 @@ app.post("/api/invoke", async (req, res) => {
           );
 
           if (!stdout || stdout.trim().length === 0) {
-            // 可能是新添加的文件 (Staged but not committed)
-            // 尝试 git diff --cached
+            // 可能是 Staged 新文件
             const { stdout: cachedDiff } = await execAsync(
               `git diff --cached -- "${targetPath}"`,
               { cwd: PROJECT_ROOT },
             );
-            if (cachedDiff && cachedDiff.trim().length > 0) {
-              resultData = cachedDiff;
-            } else {
-              // 确实没有 diff (可能是纯新增且未 stage，或者实际上没改)
-              resultData =
-                "(No git diff found. This might be a new file or untracked file.)";
-            }
+            resultData =
+              cachedDiff ||
+              "(No diff - File might be unchanged or new/untracked)";
           } else {
             resultData = stdout;
           }
         } catch (e) {
-          // 容错
-          resultData = "(No diff available - New or Untracked file)";
+          // 🔥 捕获错误：通常是 Untracked 文件会导致 git diff HEAD 报错
+          // 我们直接标记为新文件
+          resultData = "🟢 (New Untracked File) - Entire content is new.";
         }
       } else if (toolName === "list_directory") {
         const targetPath = args.path || ".";
