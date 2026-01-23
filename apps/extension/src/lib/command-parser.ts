@@ -1,5 +1,3 @@
-import * as acorn from "acorn";
-
 export interface ParsedCommand {
   original: string;
   server: string;
@@ -9,173 +7,204 @@ export interface ParsedCommand {
 }
 
 /**
- * 将 Acorn AST 节点转换为纯 JavaScript 对象
+ * 改进后的 JSON 解析器
+ * 相比旧版粗暴的 replaceAll("'", '"')，这里更谨慎，尽量只修复 Key 的格式
  */
-function astToValue(node: any): any {
-  if (!node) return null;
-
-  switch (node.type) {
-    case "Literal":
-      return node.value;
-    case "ObjectExpression":
-      const obj: any = {};
-      for (const prop of node.properties) {
-        // 支持 key: val (Identifier) 和 "key": val (Literal)
-        const key =
-          prop.key.type === "Identifier" ? prop.key.name : prop.key.value;
-        obj[key] = astToValue(prop.value);
-      }
-      return obj;
-    case "ArrayExpression":
-      return node.elements.map(astToValue);
-    case "UnaryExpression":
-      // 处理负数参数
-      if (node.operator === "-" && node.argument.type === "Literal") {
-        return -node.argument.value;
-      }
-      return undefined;
-    case "TemplateLiteral":
-      // 支持简单的模板字符串参数
-      return node.quasis.map((q: any) => q.value.raw).join("");
-    default:
-      return undefined;
+const safeJsonParse = (str: string) => {
+  if (!str || !str.trim()) return {};
+  try {
+    return JSON.parse(str);
+  } catch (e) {
+    try {
+      // 容错策略：
+      // 1. 尝试给没有引号的 Key 加上双引号 (例如 { path: "..." } -> { "path": "..." })
+      // 2. 将单引号包裹的 Key/Value 转换为双引号，但尽量避开内容内部的单引号（这是一个复杂问题，这里做基础处理）
+      // 注意：对于极其复杂的格式错误的 JSON，最好的办法还是提示用户修正，而不是过度猜测
+      const fixed = str.replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:/g, '$1"$2":');
+      return JSON.parse(fixed);
+    } catch (e2) {
+      return null;
+    }
   }
-}
+};
 
 /**
- * 检查当前位置是否是 mcp:server:tool 格式的头部
- * 返回匹配信息或 null
+ * 核心解析函数 (状态机版本)
+ * 能够处理嵌套括号、忽略注释和字符串中的关键字
  */
-function matchMcpHeader(text: string, index: number) {
-  // 快速预检
-  if (text[index] !== "m" || !text.startsWith("mcp:", index)) return null;
-
-  // 提取头部，例如 mcp:server:tool
-  // 正则仅用于提取名称，不负责查找位置
-  const substr = text.slice(index);
-  const match = substr.match(/^mcp:([a-zA-Z0-9_-]+):([a-zA-Z0-9_-]+)/);
-
-  if (match) {
-    return {
-      full: match[0],
-      server: match[1],
-      tool: match[2],
-      length: match[0].length,
-    };
-  }
-  return null;
-}
-
 export function parseCommandsFromText(text: string): ParsedCommand[] {
   const commands: ParsedCommand[] = [];
   const len = text.length;
   let i = 0;
 
-  // --- 主循环：逐字扫描，跳过注释和常规字符串 ---
+  // 辅助函数：跳过空白
+  const skipWhitespace = () => {
+    while (i < len && /\s/.test(text[i])) i++;
+  };
+
+  // 辅助函数：提取平衡括号内的内容
+  // 假设当前 i 指向的是 '(' 之后的一个字符
+  const extractBalancedArgs = (): string | null => {
+    let startContent = i;
+    let balance = 1;
+    let inString = false;
+    let stringChar = ""; // 记录是 ' 还是 " 或 `
+    let isEscaped = false;
+
+    while (i < len) {
+      const char = text[i];
+
+      if (inString) {
+        // --- 字符串内部状态 ---
+        if (isEscaped) {
+          isEscaped = false;
+        } else {
+          if (char === "\\") {
+            isEscaped = true;
+          } else if (char === stringChar) {
+            inString = false;
+          }
+        }
+      } else {
+        // --- 普通代码状态 ---
+        if (char === '"' || char === "'" || char === "`") {
+          inString = true;
+          stringChar = char;
+        } else if (char === "(") {
+          balance++;
+        } else if (char === ")") {
+          balance--;
+          if (balance === 0) {
+            // 找到结束位置
+            return text.substring(startContent, i);
+          }
+        }
+      }
+      i++;
+    }
+    return null; // 未闭合
+  };
+
+  // --- 主循环：字符扫描 ---
   while (i < len) {
     const char = text[i];
-    const next = text[i + 1] || "";
 
-    // 1. 🛡️ 跳过单行注释 // ... \n
-    if (char === "/" && next === "/") {
-      i += 2;
-      while (i < len && text[i] !== "\n") i++;
-      continue;
-    }
-
-    // 2. 🛡️ 跳过多行注释 /* ... */
-    if (char === "/" && next === "*") {
-      i += 2;
-      while (i < len - 1) {
-        if (text[i] === "*" && text[i + 1] === "/") {
-          i += 2;
-          break;
-        }
-        i++;
-      }
-      continue;
-    }
-
-    // 3. 🛡️ 跳过普通字符串 "..." 或 '...'
-    // ⚠️ 注意：这里故意【不跳过】反引号 (`)
-    // 因为 AI 通常会在 Markdown 代码块 (```js ... ```) 中输出命令。
-    // 如果我们跳过反引号区域，就会导致代码块内的有效命令被忽略。
-    // 只跳过 " 和 ' 足以防止大部分误判 (如 const x = "mcp:...").
-    if (char === '"' || char === "'") {
+    // 1. 处理字符串字面量 (跳过字符串内容，防止里面的 mcp: 被误判)
+    if (char === '"' || char === "'" || char === "`") {
       const quote = char;
-      i++;
+      i++; // 跳过起始引号
+      let isEscaped = false;
       while (i < len) {
-        if (text[i] === "\\" && i + 1 < len) {
-          i += 2; // 跳过转义字符
-          continue;
-        }
-        if (text[i] === quote) {
-          i++; // 闭合
-          break;
+        if (isEscaped) {
+          isEscaped = false;
+        } else {
+          if (text[i] === "\\") isEscaped = true;
+          else if (text[i] === quote) break;
         }
         i++;
       }
+      i++; // 跳过结束引号
       continue;
     }
 
-    // 4. 🎯 检测 MCP 命令
-    // 只有到了这里，才说明我们不在注释里，也不在普通字符串里
-    if (char === "m") {
-      const header = matchMcpHeader(text, i);
-
-      if (header) {
-        const startIndex = i;
-        // 寻找紧随其后的左括号 '('
-        let current = i + header.length;
-        let parenIndex = -1;
-
-        // 允许头部和参数之间有空白
-        for (let j = current; j < len; j++) {
-          const c = text[j];
-          if (c === "(") {
-            parenIndex = j;
+    // 2. 处理注释 (跳过注释内容)
+    if (char === "/") {
+      if (i + 1 < len && text[i + 1] === "/") {
+        // 单行注释 //...
+        i += 2;
+        while (i < len && text[i] !== "\n") i++;
+        continue;
+      } else if (i + 1 < len && text[i + 1] === "*") {
+        // 多行注释 /*...*/
+        i += 2;
+        while (i < len) {
+          if (text[i] === "*" && i + 1 < len && text[i + 1] === "/") {
+            i += 2;
             break;
           }
-          if (!/\s/.test(c)) break; // 遇到非空白且非(，说明无参数
+          i++;
         }
-
-        let args = {};
-        let isValid = true;
-        let endIndex = startIndex + header.length;
-
-        if (parenIndex !== -1) {
-          try {
-            // ✨ Acorn 接管：解析参数表达式
-            // 从 '(' 位置开始解析
-            const ast = acorn.parseExpressionAt(text, parenIndex, {
-              ecmaVersion: 2020,
-            });
-            args = astToValue(ast);
-            endIndex = (ast as any).end;
-          } catch (e) {
-            // 解析失败，可能是 AI 没写完，或者格式错误
-            console.warn("Parsing error:", e);
-            isValid = false;
-            // 错误回退：尽量取到行尾作为展示
-            const nextLine = text.indexOf("\n", startIndex);
-            endIndex = nextLine === -1 ? len : nextLine;
-          }
-        }
-
-        commands.push({
-          original: text.substring(startIndex, endIndex),
-          server: header.server,
-          tool: header.tool,
-          args,
-          isValid,
-        });
-
-        // 关键：移动指针到命令结束处，继续扫描后续内容
-        i = endIndex;
         continue;
       }
     }
 
+    // 3. 检测指令头 mcp:
+    // 简单的向前预读，确保以 "mcp:" 开头
+    if (char === "m" && text.substring(i, i + 4) === "mcp:") {
+      const startIdx = i;
+      i += 4; // 跳过 'mcp:'
+
+      // 提取 server (直到遇上 : )
+      let server = "";
+      while (
+        i < len &&
+        text[i] !== ":" &&
+        text[i] !== "(" &&
+        !/\s/.test(text[i])
+      ) {
+        server += text[i];
+        i++;
+      }
+
+      if (text[i] !== ":") {
+        // 格式不符合 mcp:s:t，可能是 mcp:s 就结束了或者其他文本，跳过
+        continue;
+      }
+      i++; // 跳过中间的 :
+
+      // 提取 tool (直到遇上 ( 或空白)
+      let tool = "";
+      while (i < len && text[i] !== "(" && !/\s/.test(text[i])) {
+        tool += text[i];
+        i++;
+      }
+
+      // 如果 server 或 tool 为空，视为无效匹配
+      if (!server || !tool) continue;
+
+      // 检查是否有参数
+      skipWhitespace();
+      let argsStr = "";
+      let args = {};
+      let isValid = true;
+      let endIndex = i;
+
+      if (i < len && text[i] === "(") {
+        i++; // 消耗 '('
+        const extracted = extractBalancedArgs();
+        if (extracted !== null) {
+          argsStr = extracted;
+          endIndex = i + 1; // i 现在在 ')' 上，endIndex 包含这个 ')'
+          i++; // 移动到 ')' 之后，方便主循环继续
+        } else {
+          // 括号未闭合
+          isValid = false;
+          endIndex = len;
+        }
+      }
+
+      // 解析参数
+      if (isValid && argsStr && argsStr.trim()) {
+        const parsed = safeJsonParse(argsStr);
+        if (parsed) {
+          args = parsed;
+        } else {
+          isValid = false;
+        }
+      }
+
+      commands.push({
+        original: text.substring(startIdx, endIndex),
+        server,
+        tool,
+        args,
+        isValid,
+      });
+
+      continue; // 继续下一次循环
+    }
+
+    // 如果什么都不是，继续下一个字符
     i++;
   }
 
