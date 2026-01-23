@@ -1,9 +1,15 @@
 import path from "path";
 import fs from "fs/promises";
-import { PROJECT_ROOT } from "../config";
+import { PROJECT_ROOT, GIT_IGNORE_LIST } from "../config";
 import { execAsync } from "../utils/exec";
 import { generateTree, listFilesWithTypes } from "../utils/fs";
 import { mcpClients } from "./mcp";
+
+// 辅助：生成 Git Exclude 参数
+const getGitExcludeArgs = () => {
+  if (GIT_IGNORE_LIST.length === 0) return "";
+  return GIT_IGNORE_LIST.map((file) => ` ":(exclude)${file}"`).join("");
+};
 
 // 🔥 定义内部工具集
 const internalTools = [
@@ -67,7 +73,7 @@ const internalTools = [
   },
   {
     name: "git_diff",
-    description: "Show uncommitted changes (git diff)",
+    description: "Show uncommitted changes (git diff HEAD)",
     inputSchema: {},
   },
   {
@@ -102,13 +108,12 @@ export async function handleInternalTool(toolName: string, args: any) {
     const targetServer = args?.server;
     const allTools: any[] = [];
 
-    // 🔥 修改：始终返回 description，只根据 detailed 决定是否返回 inputSchema
     const formatTool = (t: any, sName: string, detailed: boolean) => ({
       server: sName,
       name: t.name,
-      description: t.description || "", // ✅ 移到外面，始终可见
+      description: t.description || "",
       ...(detailed
-        ? { inputSchema: t.inputSchema } // 只有 Schema 是按需加载的
+        ? { inputSchema: t.inputSchema }
         : {}),
     });
 
@@ -127,7 +132,6 @@ export async function handleInternalTool(toolName: string, args: any) {
         );
       }
     } else {
-      // 列出摘要
       for (const [sName, client] of mcpClients.entries()) {
         try {
           const result = await client.listTools();
@@ -153,25 +157,38 @@ export async function handleInternalTool(toolName: string, args: any) {
       relativeRoot === "." ? `Project Root` : `${relativeRoot}/`;
     resultData = `${header}\n` + (await generateTree(targetPath, 0, depth));
   } else if (toolName === "git_diff") {
-    const { stdout } = await execAsync("git diff", { cwd: PROJECT_ROOT });
-    resultData = stdout || "No changes detected.";
+    // 🔥 修改：使用 git diff HEAD 以同时显示暂存和未暂存的变更
+    const excludeArgs = getGitExcludeArgs();
+    try {
+      const { stdout } = await execAsync(`git diff HEAD -- . ${excludeArgs}`, { cwd: PROJECT_ROOT });
+      resultData = stdout || "No changes detected.";
+    } catch (e) {
+      // 兼容空仓库 (无 HEAD)
+      const { stdout } = await execAsync(`git diff -- . ${excludeArgs}`, { cwd: PROJECT_ROOT });
+      resultData = stdout || "No changes detected (No HEAD).";
+    }
   } else if (toolName === "git_status") {
-    const { stdout } = await execAsync("git status", { cwd: PROJECT_ROOT });
+    const excludeArgs = getGitExcludeArgs();
+    const { stdout } = await execAsync(`git status -- . ${excludeArgs}`, { cwd: PROJECT_ROOT });
     resultData = stdout;
   } else if (toolName === "git_changed_files") {
-    // 1. 获取已追踪文件的变更 (修改 + 暂存 + 删除)
-    const { stdout: diffOut } = await execAsync(
-      "git diff --name-only HEAD",
-      { cwd: PROJECT_ROOT },
-    );
+    const excludeArgs = getGitExcludeArgs();
+    let diffOut = "";
+    try {
+      const { stdout } = await execAsync(
+        `git diff --name-only HEAD -- . ${excludeArgs}`,
+        { cwd: PROJECT_ROOT },
+      );
+      diffOut = stdout;
+    } catch (e) {
+      diffOut = "";
+    }
 
-    // 2. 获取未追踪文件 (Untracked / New files)，排除 .gitignore
     const { stdout: untrackedOut } = await execAsync(
-      "git ls-files --others --exclude-standard",
+      `git ls-files --others --exclude-standard -- . ${excludeArgs}`,
       { cwd: PROJECT_ROOT },
     );
 
-    // 3. 合并并去重
     const allFiles = new Set([
       ...diffOut
         .split("\n")
@@ -183,25 +200,18 @@ export async function handleInternalTool(toolName: string, args: any) {
         .filter((f) => f),
     ]);
 
-    // 返回数组
     return { data: Array.from(allFiles) };
-  }
-  // 🔥 新增：获取单个文件的 Diff
-  else if (toolName === "get_file_diff") {
+  } else if (toolName === "get_file_diff") {
     const targetPath = args.path;
     if (!targetPath) throw new Error("Path is required");
 
     try {
-      // 尝试获取 Diff
       const { stdout } = await execAsync(
         `git diff HEAD -- "${targetPath}"`,
-        {
-          cwd: PROJECT_ROOT,
-        },
+        { cwd: PROJECT_ROOT },
       );
 
       if (!stdout || stdout.trim().length === 0) {
-        // 可能是 Staged 新文件
         const { stdout: cachedDiff } = await execAsync(
           `git diff --cached -- "${targetPath}"`,
           { cwd: PROJECT_ROOT },
@@ -213,8 +223,6 @@ export async function handleInternalTool(toolName: string, args: any) {
         resultData = stdout;
       }
     } catch (e) {
-      // 🔥 捕获错误：通常是 Untracked 文件会导致 git diff HEAD 报错
-      // 我们直接标记为新文件
       resultData = "🟢 (New Untracked File) - Entire content is new.";
     }
   } else if (toolName === "list_directory") {

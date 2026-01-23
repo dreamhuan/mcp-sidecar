@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "MCP Assistant",
   "version": "1.0",
-  "permissions": ["sidePanel"],
+  "permissions": ["sidePanel", "clipboardRead", "clipboardWrite"],
   "host_permissions": ["http://localhost:8080/*"],
   "side_panel": {
     "default_path": "index.html"
