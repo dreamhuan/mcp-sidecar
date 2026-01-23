@@ -6,8 +6,8 @@
     "dev": "concurrently \"pnpm --filter @sidecar/server dev\" \"pnpm --filter @sidecar/extension dev\"",
     "watch": "pnpm -r run watch",
     "build": "pnpm -r run build",
-    "start": "pnpm --filter @sidecar/extension build && pnpm --filter @sidecar/server start",
-    "clean": "rm -rf node_modules apps/*/node_modules"
+    "start": "pnpm build && pnpm --filter @sidecar/server start",
+    "clean": "rm -rf node_modules apps/*/node_modules apps/*/dist"
   },
   "devDependencies": {
     "concurrently": "^8.2.0",

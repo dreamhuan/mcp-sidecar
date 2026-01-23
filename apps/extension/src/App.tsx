@@ -13,7 +13,7 @@ import * as Toast from "@radix-ui/react-toast";
 import { cn } from "./lib/utils";
 
 // Components
-import { FileSearch, type FileSearchRef } from "./components/FileSearch";
+import { FileSearch } from "./components/FileSearch";
 import { PromptManager } from "./components/PromptManager";
 import { ResultPreview } from "./components/ResultPreview";
 import { QuickActions } from "./components/QuickActions";
@@ -102,7 +102,7 @@ function App() {
   const [failedIndex, setFailedIndex] = useState<number | null>(null); // 🔥 新增：失败状态
 
   // --- Refs ---
-  const searchRef = useRef<FileSearchRef>(null);
+  const searchRef = useRef(null);
   const commandBarRef = useRef<CommandBarRef>(null);
 
   // --- Prompt & Toast State ---
@@ -529,7 +529,6 @@ function App() {
       showToast(
         "Analyzing Files",
         `Gathering Diff & Content for ${files.length} files...`,
-        "info",
       );
 
       // 2. 🔥 并发获取：Diff (老代码信息) + ReadFile (新代码上下文)
