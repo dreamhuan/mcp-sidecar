@@ -7,6 +7,7 @@ import {
   AlertCircle,
   FolderTree,
   Rocket,
+  ScanEye,
 } from "lucide-react";
 import * as Toast from "@radix-ui/react-toast";
 import { cn } from "./lib/utils";
@@ -29,6 +30,7 @@ import {
 } from "./lib/command-parser";
 
 import systemPromptRaw from "./prompts/system.md?raw";
+import crPromptRaw from "./prompts/code_review.md?raw";
 
 // 配置快捷指令
 const ACTIONS: ActionItem[] = [
@@ -40,6 +42,15 @@ const ACTIONS: ActionItem[] = [
     promptPrefix: "",
     icon: <Rocket className="w-6 h-6 text-purple-500" />, // 紫色显眼
     desc: "Protocol + Tools + Tree (One Click)",
+  },
+  {
+    id: "review-changes",
+    label: "Review Changes",
+    server: "internal",
+    tool: "macro", // 宏标记
+    promptPrefix: "",
+    icon: <ScanEye className="w-6 h-6 text-orange-500" />,
+    desc: "Diff Context + Code Review Prompt",
   },
   {
     id: "project-tree",
@@ -73,10 +84,9 @@ const SYSTEM_PROMPTS: PromptTemplate[] = [
     content: systemPromptRaw, // 使用导入的文件内容
   },
   {
-    id: "bug-fix",
-    title: "🐛 Bug Fix Analysis",
-    content:
-      "Please analyze the following code changes and check for potential bugs:\n\n",
+    id: "code-review",
+    title: "Code Review",
+    content: crPromptRaw,
   },
 ];
 
@@ -462,11 +472,108 @@ function App() {
     }
   };
 
+  const generateReviewContext = async () => {
+    commandBarRef.current?.setValue("");
+    setLoading(true);
+
+    try {
+      const reviewPromptTemplate =
+        prompts.find((p) => p.title === "Code Review")?.content ||
+        "Please review the following code changes for bugs, security, and style:\n";
+
+      // 1. 获取变更文件列表
+      const filesRes = await invokeAPI({
+        serverName: "internal",
+        toolName: "git_changed_files",
+      });
+
+      if (
+        !filesRes.success ||
+        !Array.isArray(filesRes.data) ||
+        filesRes.data.length === 0
+      ) {
+        showToast("No Changes", "No modified files found in git.", "error");
+        setLoading(false);
+        return;
+      }
+
+      const files = filesRes.data as string[];
+      showToast(
+        "Analyzing Files",
+        `Gathering Diff & Content for ${files.length} files...`,
+        "info",
+      );
+
+      // 2. 🔥 并发获取：Diff (老代码信息) + ReadFile (新代码上下文)
+      const fileContexts = await Promise.all(
+        files.map(async (filePath) => {
+          try {
+            // 并行请求：获取 Diff 和 获取完整内容
+            const [diffRes, contentRes] = await Promise.all([
+              invokeAPI({
+                serverName: "internal",
+                toolName: "get_file_diff",
+                args: { path: filePath },
+              }),
+              invokeAPI({
+                serverName: "internal",
+                toolName: "read_file",
+                args: { path: filePath },
+              }),
+            ]);
+
+            return [
+              `\n=== FILE REPORT: ${filePath} ===`,
+              `\n[PART 1: CHANGES (Git Diff)]`,
+              `Shows lines removed (-) and added (+)`,
+              `\`\`\`diff`,
+              diffRes.data || "(No diff info)",
+              `\`\`\``,
+              `\n[PART 2: FULL CURRENT CONTENT]`,
+              `Full context of the file after changes`,
+              `\`\`\`typescript`, // 这里简单用 typescript，或者你可以根据文件后缀动态判断
+              contentRes.data || "(Error reading content)",
+              `\`\`\``,
+            ].join("\n");
+          } catch (e) {
+            return `\n=== FILE: ${filePath} ===\n(Error gathering info)`;
+          }
+        }),
+      );
+
+      // 3. 组装最终文本
+      const fullContext = [
+        "# Code Review Request",
+        "",
+        reviewPromptTemplate,
+        "",
+        "## File Analysis",
+        ...fileContexts,
+      ].join("\n");
+
+      await navigator.clipboard.writeText(fullContext);
+      showToast(
+        "Ready for Review!",
+        "Diffs & Content copied to clipboard.",
+        "success",
+      );
+      setResultPreview(fullContext);
+    } catch (e: any) {
+      showToast("Review Init Failed", e.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // 🔥 3. 修改 Action 点击处理：拦截 initialize-context
   const handleActionClick = (act: ActionItem) => {
     // 拦截特殊宏命令
     if (act.id === "initialize-context") {
       generateFullContext();
+      return;
+    }
+    if (act.id === "review-changes") {
+      generateReviewContext();
       return;
     }
 
