@@ -90,6 +90,32 @@ const SYSTEM_PROMPTS: PromptTemplate[] = [
   },
 ];
 
+// Helper: 根据文件名推断语言
+const getLanguageFromPath = (path: string) => {
+  if (!path) return "";
+  const ext = path.split(".").pop()?.toLowerCase();
+  const map: Record<string, string> = {
+    ts: "typescript",
+    tsx: "typescript",
+    js: "javascript",
+    jsx: "javascript",
+    json: "json",
+    html: "html",
+    css: "css",
+    md: "markdown",
+    py: "python",
+    go: "go",
+    rs: "rust",
+    java: "java",
+    c: "c",
+    cpp: "cpp",
+    sh: "bash",
+    yaml: "yaml",
+    yml: "yaml",
+  };
+  return map[ext || ""] || "";
+};
+
 function App() {
   // --- Global State ---
   const [loading, setLoading] = useState(false);
@@ -202,6 +228,16 @@ function App() {
         if (json.success) {
           if (typeof json.data === "string") output = json.data;
           else output = JSON.stringify(json.data, null, 2);
+
+          // 为批量执行的 read_file 结果包裹代码块，使用普通字符串拼接，避免转义地狱
+          if (cmd.tool === "read_file" && cmd.args?.path) {
+            const lang = getLanguageFromPath(cmd.args.path);
+            output = "```" + lang + "\n" + output + "\n```";
+          } else if (cmd.tool === "git_diff" || cmd.tool === "get_file_diff") {
+            output = "```diff\n" + output + "\n```";
+          } else if (cmd.tool === "list_directory" || cmd.tool === "get_tree") {
+            output = "```text\n" + output + "\n```";
+          }
 
           results.push(
             `### [CMD] ${cmd.tool} (Args: ${JSON.stringify(cmd.args)})\n${output}\n`,
@@ -358,15 +394,27 @@ function App() {
             ...dirs.map((d: any) => `${d.name}/`),
             ...files.map((f: any) => f.name),
           ].join("\n");
+
+          // 自动包裹文件列表 (双引号拼接)
+          contentStr = "```text\n" + contentStr + "\n```";
         }
         // 格式化普通对象
         else if (typeof json.data === "object") {
           contentStr = JSON.stringify(json.data, null, 2);
         } else {
           contentStr = String(json.data);
+
+          // 🔥 自动包裹读取内容 (双引号拼接)
+          if (toolName === "read_file" && args?.path) {
+            const lang = getLanguageFromPath(args.path);
+            contentStr = "```" + lang + "\n" + contentStr + "\n```";
+          } else if (toolName === "get_tree" || toolName === "git_status") {
+            contentStr = "```text\n" + contentStr + "\n```";
+          } else if (toolName === "git_diff" || toolName === "get_file_diff") {
+            contentStr = "```diff\n" + contentStr + "\n```";
+          }
         }
 
-        contentStr = contentStr.replace(/`/g, "'");
         const finalResult = promptPrefix
           ? `${promptPrefix}${contentStr}`
           : contentStr;
@@ -467,7 +515,9 @@ function App() {
         toolName: "get_tree",
         args: { root: ".", depth: 3 },
       });
-      const treeSection = `## Project Structure\n\`\`\`\n${treeRes.data}\n\`\`\``;
+      // 使用双引号拼接，避免反引号转义错误
+      const treeSection =
+        "## Project Structure\n```\n" + treeRes.data + "\n```";
 
       // Step D: 组装终极 Prompt
       const fullContext = [
@@ -549,18 +599,19 @@ function App() {
               }),
             ]);
 
+            // 使用双引号字符串拼接，规避模板字符串中反引号转义丢失的问题
             return [
               `\n=== FILE REPORT: ${filePath} ===`,
               `\n[PART 1: CHANGES (Git Diff)]`,
-              `Shows lines removed (-) and added (+)`,
-              `\`\`\`diff`,
+              `Shows lines removed (-) and added (+) id: ${filePath}-diff`,
+              "```diff",
               diffRes.data || "(No diff info)",
-              `\`\`\``,
+              "```",
               `\n[PART 2: FULL CURRENT CONTENT]`,
-              `Full context of the file after changes`,
-              `\`\`\`typescript`, // 这里简单用 typescript，或者你可以根据文件后缀动态判断
+              `Full context of the file after changes id: ${filePath}-content`,
+              "```" + getLanguageFromPath(filePath),
               contentRes.data || "(Error reading content)",
-              `\`\`\``,
+              "```",
             ].join("\n");
           } catch (e) {
             return `\n=== FILE: ${filePath} ===\n(Error gathering info)`;
