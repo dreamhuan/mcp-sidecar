@@ -1,6 +1,6 @@
 # 📖 MCP Sidecar 使用指南
 
-**MCP Sidecar** 是一个连接你的浏览器 AI（ChatGPT, Claude）与本地 VS Code 开发环境的**智能传输通道**。
+**MCP Sidecar** 是一个连接你的浏览器 AI（ChatGPT, Gemini）与本地 VS Code 开发环境的**智能传输通道**。
 
 在这个工作流中，Sidecar 负责处理繁琐的**上下文搬运**和**代码写入**，让你和 VS Code 专注于核心逻辑开发。
 

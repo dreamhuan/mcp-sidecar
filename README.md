@@ -1,6 +1,6 @@
 # MCP Sidecar
 
-> 让网页版 AI 对话框（DeepSeek, ChatGPT, Claude）拥有本地 Agent 能力。
+> 让网页版 AI 对话框（DeepSeek, ChatGPT, Gemini）拥有本地 Agent 能力。
 
 这是一个基于 **MCP (Model Context Protocol)** 的开发者工具，包含 Chrome 插件前端和 Node.js 本地后端。它能通过 Sidebar 快速将本地文件、Git 变更等上下文投递给 AI，并管理常用的 Prompt 模板。
 
@@ -97,3 +97,10 @@ A: 浏览器插件受限于沙箱安全策略，无法直接读取你的本地�
 
 **Q: 文件搜索怎么用？**  
 A: 在 Input 框输入路径（如 `src/App.tsx`）回车即可读取内容。输入目录名（如 `src`）回车可查看文件列表。支持按 `Tab` 键补全路径。
+
+## UI
+
+<div style="display:inline-flex">
+<img src="./img/ui.png" width="50%" />
+<img src="./img/prompt.png" width="50%" />
+</div>

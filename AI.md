@@ -1,118 +1,90 @@
-# MCP Sidecar Project Summary (Technical Context)
+# MCP Sidecar Project Context
 
-**Project Name**: MCP Sidecar
-**Type**: Monorepo (pnpm workspace)
-**Description**: A "Human-in-the-Loop" AI Agent environment consisting of a Chrome Extension (Frontend) and a Node.js Server (Backend). It bridges the browser UI with local system capabilities via the Model Context Protocol (MCP), featuring a "Smart Executor" workflow for AI-driven operations.
+> **SYSTEM NOTE**: This file is a technical reference for AI coding assistants. Use this context to understand the project structure, dependencies, and operational constraints.
 
-## 1. Technology Stack
+## 1. Project Identity
+- **Name**: MCP Sidecar
+- **Type**: Monorepo (`pnpm workspace`)
+- **Architecture**: Client-Server (Browser Extension UI <-> Local Node.js Backend)
+- **Core Function**: "Human-in-the-Loop" AI Agent environment bridging Web UI with Local System via MCP (Model Context Protocol).
 
-- **Package Manager**: `pnpm` (Workspace enabled)
-- **Backend (`apps/server`)**: Node.js, Express, `@modelcontextprotocol/sdk`, `dotenv`, `tsx`.
-- **Frontend (`apps/extension`)**: React, Vite, Tailwind CSS v4, Lucide React, Radix UI.
-- **Build Tools**: Custom Vite plugin for Manifest injection & Env injection.
+## 2. Technology Stack (Strict constraints)
 
-## 2. Directory Structure & Key Files
+### Backend (`apps/server`)
+- **Runtime**: Node.js (Current LTS), `tsx` for execution.
+- **Framework**: Express.js (`src/index.ts`).
+- **MCP SDK**: `@modelcontextprotocol/sdk`.
+- **Key Features**: 
+  - **Virtual Server**: `services/internal.ts` (Git, FS reads).
+  - **Gateway**: `services/mcp.ts` (Connects to external MCP servers defined in `mcp.config.json`).
+  - **Security**: Enforces `PROJECT_ROOT` path validation (No access outside target dir).
+
+### Frontend (`apps/extension`)
+- **Framework**: React 19, Vite 7.
+- **Styling**: Tailwind CSS v4 (No `postcss.config.js` needed), `clsx`, `tailwind-merge`.
+- **UI Library**: Radix UI (Primitives), Lucide React (Icons).
+- **State/Logic**: Custom `useMcpEngine` hook (Command orchestration).
+- **Parser**: Custom State Machine parser (`lib/command-parser.ts`) handling nested brackets/quotes.
+
+## 3. Directory Map
 
 ```text
 .
-├── .env                       # [Root] Shared env vars (PORT, PROJECT_ROOT, GIT_IGNORE_FILE)
-├── mcp.config.json            # [Root] External MCP Server definitions (e.g. fs)
-├── package.json               # [Root] Orchestration scripts
+├── mcp.config.json          # External MCP server config (e.g. fs, vibeus-ds)
+├── .env                     # PROJECT_ROOT, PORT definition
 ├── apps
-│   ├── server
-│   │   ├── src
-│   │   │   ├── config.ts          # Env loading & Path resolution strategy
-│   │   │   ├── index.ts           # Controller: API routing & Error handling
-│   │   │   ├── services
-│   │   │   │   ├── internal.ts    # "Virtual" MCP server logic (Git, FS read)
-│   │   │   │   └── mcp.ts         # External MCP Client connection manager
-│   │   │   └── utils
-│   │   │       ├── command.ts     # Command parsing regex
-│   │   │       ├── exec.ts        # Child Process wrapper
-│   │   │       └── fs.ts          # Safe FS operations (Path traversal protection)
-│   │   └── package.json
-│   └── extension
-│       ├── manifest.json      # [Template] Permissions: sidePanel, clipboardRead, clipboardWrite
-│       ├── vite.config.ts     # Build config (Manifest injection)
+│   ├── server               # [Backend] Local Operations & MCP Gateway
+│   │   └── src
+│   │       ├── services/    # internal.ts (Git/Tree), mcp.ts (Connection)
+│   │       └── utils/       # fs.ts (Tree Gen), command.ts (Parsing)
+│   └── extension            # [Frontend] UI & Logic
 │       └── src
-│           ├── App.tsx        # Main Logic: Smart Parser, Macro Execution, State
-│           ├── lib
-│           │   └── command-parser.ts # Regex logic for extracting mcp commands
-│           ├── prompts
-│           │   └── system.md  # Default "Sidecar Protocol" (Strict Markdown Rules)
-│           ├── components
-│           │   ├── CommandBar.tsx    # Input for Smart Commands
-│           │   ├── ExecutionPlan.tsx # Batch execution UI with progress tracking
-│           │   ├── FileSearch.tsx    # Project Explorer
-│           │   └── PromptManager.tsx # Template management
-
+│           ├── components/  # ExecutionPlan, CommandBar, FileSearch
+│           ├── hooks/       # useMcpEngine (Core State Machine)
+│           ├── lib/         # command-parser.ts (Text -> Command)
+│           └── prompts/     # System prompts (system.md)
 ```
 
-## 3. Configuration Architecture
+## 4. Operational Protocol (AI Instructions)
 
-### A. Environment Variables (`.env`)
-
-Located at project root.
-
-```ini
-PORT=8080
-PROJECT_ROOT=/absolute/path/to/target/project
-# Custom ignore list for AI Context (avoids polluting context with huge lockfiles)
-GIT_IGNORE_FILE=package-lock.json,pnpm-lock.yaml
+### Command Format
+The system parses code blocks in Markdown. You MUST format commands as:
+```javascript
+mcp:<server_name>:<tool_name>(<json_args>)
 ```
 
-### B. Dual-Track Filesystem Strategy
+### Available Namespaces & Tools
 
-1. **UI/Internal Operations (`internal`)**:
-   - **Read-Only / Diagnostic**: Used for Tree generation, File Reading, and Git inspection.
-   - **Virtual Service**: Implemented in `services/internal.ts`, not a separate MCP process.
-   - **Strict Scope**: Enforces `PROJECT_ROOT` checks via `utils/fs.ts`.
+#### A. `internal` (Read-Only / Diagnostics)
+*Implemented in `apps/server/src/services/internal.ts`*
 
-2. **AI Write Operations (`fs`)**:
-   - **Write / Side-Effects**: Handled by external `@modelcontextprotocol/server-filesystem`.
-   - **Protocol**: AI uses `mcp:fs:write_file` for modifications.
+| Tool | Arguments | Behavior |
+| :--- | :--- | :--- |
+| `get_tree` | `{ "root": ".", "depth": 3 }` | Returns recursive file structure. Always start here. |
+| `read_file` | `{ "path": "src/App.tsx" }` | Reads text content. |
+| `list` | `{}` | Lists all available tools from all connected servers. |
+| `git_status` | `{}` | Runs `git status`. |
+| `git_diff` | `{}` | Runs `git diff HEAD` (Staged + Unstaged). |
+| `git_changed_files` | `{}` | **Smart List**: Combines `git diff` + `git ls-files --others` (Finds untracked files). |
+| `get_file_diff` | `{ "path": "..." }` | Returns specific file diff OR "New File" status. |
 
-## 4. Module Architecture (Refactored)
+#### B. `fs` (Write / Side-Effects)
+*Proxied to `@modelcontextprotocol/server-filesystem`*
 
-### Backend (`apps/server`)
+| Tool | Arguments | Behavior |
+| :--- | :--- | :--- |
+| `write_file` | `{ "path": "...", "content": "..." }` | **Auto-Mkdir**: Recursively creates parent dirs. Overwrites files. |
+| `create_directory` | `{ "path": "..." }` | Recursively creates directories (`mkdir -p`). |
+| `list_directory` | `{ "path": "..." }` | Lists files with metadata (size, time). |
 
-- **Controller Layer (`index.ts`)**:
-  - Handles HTTP `POST /api/invoke`.
-  - Routes `serverName === 'internal'` -> `services/internal`.
-  - Routes other names -> `services/mcp` (External Clients).
-  - **Global Error Handling**: Traps MCP errors and returns standard JSON responses.
+## 5. Coding Guidelines for AI
 
-- **Service Layer**:
-  - **`internal.ts`**: Implements tools like `list`, `get_tree`, `git_diff`. 
-  - **`mcp.ts`**: Manages `StdioClientTransport` connections based on `mcp.config.json`.
-
-- **Git Logic (Enhanced)**:
-  - `git_diff`: Executes `git diff HEAD` to show **both staged and unstaged** changes.
-  - `git_changed_files`: Merges `git diff --name-only HEAD` and `git ls-files --others` to handle new/untracked files gracefully.
-  - **Ignore Support**: Respects `GIT_IGNORE_FILE` env var using Git Pathspec `:(exclude)`.
-
-### Frontend (`apps/extension`)
-
-- **Smart Executor**:
-  - Parses commands wrapped in Markdown code blocks (e.g., ` ```javascript ... ``` `).
-  - **Batch Mode**: `ExecutionPlan` component handles multi-step instructions with "Stop-on-Failure" logic.
-
-- **Macro: Init Context**:
-  - Aggregates **Protocol** (`system.md`) + **Tools** (`internal:list`) + **Tree** (`internal:get_tree`).
-  - Copies to clipboard for one-shot AI initialization.
-
-## 5. Critical Implementation Details
-
-1. **Naming Convention**: `mcp:{server}:{tool}`.
-2. **Path Security**: All internal tools use `path.resolve(PROJECT_ROOT, relative)` + `startsWith` check.
-3. **Git Reliability**: 
-   - Handles "Empty Repository" (no HEAD) gracefully via try-catch.
-   - Uses `execAsync` for shell commands.
-4. **Extension Permissions**:
-   - Requires `clipboardRead` and `clipboardWrite` in `manifest.json` to handle Copy/Paste interactions.
-
-## 6. Development Workflow
-
-- **Start All**: `pnpm start` (Root)
-- **Backend Dev**: `cd apps/server && pnpm dev`
-- **Frontend Dev**: `cd apps/extension && pnpm dev`
+1.  **Context Loading**: Before modifying code, ALWAYS check `mcp:internal:get_tree` and `mcp:internal:read_file` to match existing patterns.
+2.  **Writing Files**: 
+    - Provide full file content (no `// ... existing code` placeholders).
+    - Ensure JSON strings in `write_file` arguments are properly escaped.
+3.  **Frontend/Backend Split**:
+    - **Frontend** handles UI, Parsing, and Prompt Management.
+    - **Backend** handles File I/O, Git, and MCP connections.
+    - *Do not* import Node.js `fs` modules in Frontend code.
+4.  **Error Handling**: If a command fails, the backend returns HTTP 500 with a JSON error. The Frontend stops batch execution immediately.

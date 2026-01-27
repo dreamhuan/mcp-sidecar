@@ -1,6 +1,6 @@
 # MCP Sidecar
 
-> Empower web-based AI chat interfaces (DeepSeek, ChatGPT, Claude) with local Agent capabilities.
+> Empower web-based AI chat interfaces (DeepSeek, ChatGPT, Gemini) with local Agent capabilities.
 
 This is a developer tool built on the **Model Context Protocol (MCP)**, consisting of a Chrome Extension frontend and a local Node.js backend. It enables you to quickly inject local context (such as local files and Git changes) into AI conversations via a sidebar, while also managing frequently used prompt templates.
 
@@ -95,3 +95,10 @@ A: Browser extensions are restricted by sandbox security policies and cannot dir
 
 **Q: How do I use the file search?**  
 A: Enter a file path (e.g., `src/App.tsx`) in the Input box and hit Enter to read its content. Enter a directory name (e.g., `src`) and hit Enter to list files within that directory. Press `Tab` to use path auto-completion.
+
+## UI
+
+<div style="display:inline-flex">
+<img src="./img/ui.png" width="50%" />
+<img src="./img/prompt.png" width="50%" />
+</div>

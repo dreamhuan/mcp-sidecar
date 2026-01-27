@@ -250,6 +250,7 @@ function App() {
 
       {/* Toast Notification */}
       <Toast.Root
+        duration={3000}
         open={open}
         onOpenChange={setOpen}
         className={cn(
