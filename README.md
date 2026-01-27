@@ -101,6 +101,6 @@ A: 在 Input 框输入路径（如 `src/App.tsx`）回车即可读取内容。�
 ## UI
 
 <div style="display:inline-flex">
-<img src="./img/ui.png" width="50%" />
-<img src="./img/prompt.png" width="50%" />
+<img src="./img/ui.png" width="30%" />
+<img src="./img/prompt.png" width="30%" />
 </div>

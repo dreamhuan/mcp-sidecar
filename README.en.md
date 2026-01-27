@@ -99,6 +99,6 @@ A: Enter a file path (e.g., `src/App.tsx`) in the Input box and hit Enter to rea
 ## UI
 
 <div style="display:inline-flex">
-<img src="./img/ui.png" width="50%" />
-<img src="./img/prompt.png" width="50%" />
+<img src="./img/ui.png" width="30%" />
+<img src="./img/prompt.png" width="30%" />
 </div>
