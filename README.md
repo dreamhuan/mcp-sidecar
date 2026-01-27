@@ -1,4 +1,5 @@
 # MCP Sidecar
+[English](./README.en.md)
 
 > 让网页版 AI 对话框（DeepSeek, ChatGPT, Gemini）拥有本地 Agent 能力。
 
