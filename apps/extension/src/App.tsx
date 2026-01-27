@@ -13,7 +13,8 @@ import * as Toast from "@radix-ui/react-toast";
 import { cn } from "./lib/utils";
 
 // Components
-import { FileSearch } from "./components/FileSearch";
+// 🔥 引入类型
+import { FileSearch, type FileSearchRef } from "./components/FileSearch";
 import { PromptManager } from "./components/PromptManager";
 import { ResultPreview } from "./components/ResultPreview";
 import { QuickActions } from "./components/QuickActions";
@@ -57,11 +58,11 @@ const ACTIONS: ActionItem[] = [
     label: "Copy Tree",
     server: "internal",
     tool: "get_tree",
-    // 默认不传参即为 root=".", depth=3
+    // 默认不传参即为 root=".", depth=3，但会被 handleActionClick 动态拦截覆盖
     args: {},
-    promptPrefix: "Current Project Structure:\n\n",
+    promptPrefix: "",
     icon: <FolderTree className="w-6 h-6 text-emerald-500" />,
-    desc: "Copy project structure (Default depth: 3)",
+    desc: "Copy project structure (From Explorer)",
   },
   {
     id: "git-diff",
@@ -128,7 +129,8 @@ function App() {
   const [failedIndex, setFailedIndex] = useState<number | null>(null); // 🔥 新增：失败状态
 
   // --- Refs ---
-  const searchRef = useRef(null);
+  // 🔥 更新 Ref 类型
+  const searchRef = useRef<FileSearchRef>(null);
   const commandBarRef = useRef<CommandBarRef>(null);
 
   // --- Prompt & Toast State ---
@@ -229,14 +231,17 @@ function App() {
           if (typeof json.data === "string") output = json.data;
           else output = JSON.stringify(json.data, null, 2);
 
-          // 为批量执行的 read_file 结果包裹代码块，使用普通字符串拼接，避免转义地狱
+          // 🔥🔥🔥 升级：输出文件头 (file: xxx 或 fold: xxx)
           if (cmd.tool === "read_file" && cmd.args?.path) {
-            const lang = getLanguageFromPath(cmd.args.path);
-            output = "```" + lang + "\n" + output + "\n```";
+             const lang = getLanguageFromPath(cmd.args.path);
+             output = "file: " + cmd.args.path + "\n" + "```" + lang + "\n" + output + "\n```";
           } else if (cmd.tool === "git_diff" || cmd.tool === "get_file_diff") {
-            output = "```diff\n" + output + "\n```";
+             // Git Diff 通常没有单一路径，如果有 path 参数则显示
+             const header = cmd.args?.path ? "file: " + cmd.args.path + " (diff)\n" : "";
+             output = header + "```diff\n" + output + "\n```";
           } else if (cmd.tool === "list_directory" || cmd.tool === "get_tree") {
-            output = "```text\n" + output + "\n```";
+             const pathVal = cmd.args?.root || cmd.args?.path || ".";
+             output = "fold: " + pathVal + "\n" + "```text\n" + output + "\n```";
           }
 
           results.push(
@@ -395,8 +400,9 @@ function App() {
             ...files.map((f: any) => f.name),
           ].join("\n");
 
-          // 自动包裹文件列表 (双引号拼接)
-          contentStr = "```text\n" + contentStr + "\n```";
+          // 🔥 格式化 fold: header
+          const pathVal = args?.path || ".";
+          contentStr = "fold: " + pathVal + "\n" + "```text\n" + contentStr + "\n```";
         }
         // 格式化普通对象
         else if (typeof json.data === "object") {
@@ -404,14 +410,18 @@ function App() {
         } else {
           contentStr = String(json.data);
 
-          // 🔥 自动包裹读取内容 (双引号拼接)
+          // 🔥 格式化 file:/fold: header
           if (toolName === "read_file" && args?.path) {
             const lang = getLanguageFromPath(args.path);
-            contentStr = "```" + lang + "\n" + contentStr + "\n```";
-          } else if (toolName === "get_tree" || toolName === "git_status") {
-            contentStr = "```text\n" + contentStr + "\n```";
+            contentStr = "file: " + args.path + "\n" + "```" + lang + "\n" + contentStr + "\n```";
+          } else if (toolName === "get_tree") {
+             const pathVal = args?.root || ".";
+             contentStr = "fold: " + pathVal + "\n" + "```text\n" + contentStr + "\n```";
+          } else if (toolName === "git_status") {
+             contentStr = "```text\n" + contentStr + "\n```";
           } else if (toolName === "git_diff" || toolName === "get_file_diff") {
-            contentStr = "```diff\n" + contentStr + "\n```";
+             const header = args?.path ? "file: " + args.path + " (diff)\n" : "";
+             contentStr = header + "```diff\n" + contentStr + "\n```";
           }
         }
 
@@ -516,8 +526,7 @@ function App() {
         args: { root: ".", depth: 3 },
       });
       // 使用双引号拼接，避免反引号转义错误
-      const treeSection =
-        "## Project Structure\n```\n" + treeRes.data + "\n```";
+      const treeSection = "## Project Structure\n```\n" + treeRes.data + "\n```";
 
       // Step D: 组装终极 Prompt
       const fullContext = [
@@ -599,16 +608,16 @@ function App() {
               }),
             ]);
 
-            // 使用双引号字符串拼接，规避模板字符串中反引号转义丢失的问题
+            // 🔥🔥🔥 使用 file: header
             return [
               `\n=== FILE REPORT: ${filePath} ===`,
               `\n[PART 1: CHANGES (Git Diff)]`,
-              `Shows lines removed (-) and added (+) id: ${filePath}-diff`,
+              `file: ${filePath} (diff)`,
               "```diff",
               diffRes.data || "(No diff info)",
               "```",
               `\n[PART 2: FULL CURRENT CONTENT]`,
-              `Full context of the file after changes id: ${filePath}-content`,
+              `file: ${filePath}`,
               "```" + getLanguageFromPath(filePath),
               contentRes.data || "(Error reading content)",
               "```",
@@ -643,7 +652,7 @@ function App() {
     }
   };
 
-  // 🔥 3. 修改 Action 点击处理：拦截 initialize-context
+  // 🔥 3. 修改 Action 点击处理：拦截 initialize-context 和 project-tree
   const handleActionClick = (act: ActionItem) => {
     // 拦截特殊宏命令
     if (act.id === "initialize-context") {
@@ -652,6 +661,23 @@ function App() {
     }
     if (act.id === "review-changes") {
       generateReviewContext();
+      return;
+    }
+    // 🔥🔥🔥 新增：拦截 Copy Tree，动态获取 Project Explorer 路径
+    if (act.id === "project-tree") {
+      const currentPath = searchRef.current?.getValue() || ".";
+      const args = { root: currentPath, depth: 3 };
+      const commandStr = `mcp:internal:get_tree(${JSON.stringify(args)})`;
+      
+      commandBarRef.current?.setValue(commandStr);
+      
+      // 执行并带有提示
+      handleRun(
+        "internal", 
+        "get_tree", 
+        args, 
+        `Current Project Structure (${currentPath}):\n\n`
+      );
       return;
     }
 
@@ -756,6 +782,7 @@ function App() {
           <h2 className="text-[13px] font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1">
             Project Explorer
           </h2>
+          {/* 🔥 绑定 ref */}
           <FileSearch
             ref={searchRef}
             loading={loading}

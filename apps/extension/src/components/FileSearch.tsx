@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useImperativeHandle } from "react";
 import {
   Search,
   Folder,
@@ -9,11 +9,18 @@ import {
 import { cn } from "../lib/utils";
 import { API_BASE_URL } from "../common";
 
+// 🔥 统一接口规范：与 CommandBar 保持一致
+export interface FileSearchRef {
+  setValue: (value: string) => void;
+  getValue: () => string;
+}
+
 interface FileSearchProps {
   onSelect: (path: string) => void;
   loading?: boolean;
   // 新增 ref 转发，允许父组件控制
-  ref?: React.Ref<any>;
+  // React 19: ref 直接作为 prop 传递
+  ref?: React.Ref<FileSearchRef>;
 }
 
 interface FileEntry {
@@ -22,9 +29,11 @@ interface FileEntry {
   path: string;
 }
 
+// 🔥 React 19: 不再需要 forwardRef，直接解构 ref
 export function FileSearch({
   onSelect,
   loading: parentLoading,
+  ref,
 }: FileSearchProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FileEntry[]>([]);
@@ -32,9 +41,18 @@ export function FileSearch({
   const [isOpen, setIsOpen] = useState(false);
 
   // 防抖 Timer
-  const debounceRef = useRef(0);
+  const debounceRef = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // 🔥 暴露给父组件的方法 (Standardized)
+  useImperativeHandle(ref, () => ({
+    setValue: (val: string) => {
+      setQuery(val);
+      // 可选：如果设置了值，可能希望自动聚焦或触发搜索
+    },
+    getValue: () => query || ".", // 如果为空，默认返回根目录 "."
+  }));
 
   // 点击外部关闭
   useEffect(() => {
@@ -122,7 +140,7 @@ export function FileSearch({
     // 如果是空字符串，我们也请求（列出根目录），这样一开始就有东西看
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    debounceRef.current = setTimeout(() => {
+    debounceRef.current = window.setTimeout(() => {
       fetchFiles(query); // 👈 这里改了：去掉 || "."
     }, 300);
 
@@ -245,8 +263,8 @@ export function FileSearch({
               )}
               <span className="text-sm text-slate-600 truncate font-mono">
                 {/* 只显示文件名，因为路径在输入框里已经有了，显示全路径会很乱，
-                     或者你可以显示 item.path，看你的偏好。
-                     这里建议显示 item.name，因为这是相对输入框当前目录的补全 */}
+                    或者你可以显示 item.path，看你的偏好。
+                    这里建议显示 item.name，因为这是相对输入框当前目录的补全 */}
                 {item.name}
               </span>
 
