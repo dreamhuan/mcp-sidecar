@@ -8,6 +8,22 @@ import { parseMcpCommand } from "./utils/command";
 import { connectMcp, mcpClients } from "./services/mcp";
 import { handleInternalTool } from "./services/internal";
 
+// 🔥🔥🔥 核心修改：在程序启动最开始，强行将工作目录切换到目标项目根目录 🔥🔥🔥
+// 这样后续启动的所有 MCP 子进程都会继承这个目录作为 CWD
+try {
+  console.log(
+    `[Init] Switching process CWD from "${process.cwd()}" to "${PROJECT_ROOT}"`,
+  );
+  process.chdir(PROJECT_ROOT);
+  console.log(`✅ CWD switched successfully.`);
+} catch (error: any) {
+  console.error(
+    `❌ Fatal Error: Failed to change directory to ${PROJECT_ROOT}.`,
+  );
+  console.error(`Reason: ${error.message}`);
+  process.exit(1); // 如果切不过去，直接退出，避免在错误的目录下操作文件
+}
+
 const app = express();
 
 app.use(cors());
@@ -40,7 +56,12 @@ app.post("/api/invoke", async (req, res) => {
 
       // 如果是工具列表或结构化数据，直接返回 JSON 对象
       if (isToolList || isStructured) {
-         return res.json({ success: true, data: resultData, isToolList, isStructured });
+        return res.json({
+          success: true,
+          data: resultData,
+          isToolList,
+          isStructured,
+        });
       }
       // 否则作为通用数据返回 (字符串或 JSON)
     }
