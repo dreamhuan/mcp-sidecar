@@ -44,6 +44,10 @@ cp mcp.config.sample.json mcp.config.json
 
 复制完毕之后修改 `.env` 的 `PROJECT_ROOT`
 
+```bash
+PROJECT_ROOT=/absolute/path/to/project/root
+```
+
 ### 3. 一键运行
 
 ```bash

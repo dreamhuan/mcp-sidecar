@@ -40,6 +40,10 @@ cp mcp.config.sample.json mcp.config.json
 
 After copying, modify the `PROJECT_ROOT` in the `.env` file
 
+```bash
+PROJECT_ROOT=/absolute/path/to/project/root
+```
+
 ### 3. One-Click Run
 
 ```bash
