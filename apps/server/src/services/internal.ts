@@ -15,13 +15,13 @@ const getGitExcludeArgs = () => {
 const internalTools = [
   {
     name: "list",
-    description: "List available tools. Args: server (string, optional)",
+    description: "List available servers (default) or tools for a specific server.",
     inputSchema: {
       type: "object",
       properties: {
         server: {
           type: "string",
-          description: "Filter tools by server name (e.g. 'git', 'fs')",
+          description: "Filter tools by server name (e.g. 'git', 'fs'). If omitted, returns list of server names only.",
         },
       },
     },
@@ -106,6 +106,16 @@ export async function handleInternalTool(toolName: string, args: any) {
 
   if (toolName === "list") {
     const targetServer = args?.server;
+    
+    // 🔥 优化：如果没有指定 server，默认只返回 Server 名称列表
+    if (!targetServer) {
+       const servers = Array.from(mcpClients.keys()).sort();
+       // 确保 internal 在列表中
+       if (!servers.includes("internal")) servers.unshift("internal");
+       return { data: servers, isStructured: true, isToolList: true };
+    }
+
+    // 如果指定了 Server，则查询该 Server 的具体工具
     const allTools: any[] = [];
 
     const formatTool = (t: any, sName: string, detailed: boolean) => ({
@@ -117,35 +127,20 @@ export async function handleInternalTool(toolName: string, args: any) {
         : {}),
     });
 
-    if (targetServer) {
-      if (targetServer === "internal") {
-        allTools.push(
-          ...internalTools.map((t) => formatTool(t, "internal", true)),
-        );
-      } else {
-        const client = mcpClients.get(targetServer);
-        if (!client)
-           throw new Error("Server not found");
-        const result = await client.listTools();
-        allTools.push(
-          ...result.tools.map((t) => formatTool(t, targetServer, true)),
-        );
-      }
-    } else {
-      for (const [sName, client] of mcpClients.entries()) {
-        try {
-          const result = await client.listTools();
-          allTools.push(
-            ...result.tools.map((t) => formatTool(t, sName, false)),
-          );
-        } catch (e) {
-          allTools.push({ server: sName, name: `Error: ${e}` });
-        }
-      }
+    if (targetServer === "internal") {
       allTools.push(
-        ...internalTools.map((t) => formatTool(t, "internal", false)),
+        ...internalTools.map((t) => formatTool(t, "internal", true)),
+      );
+    } else {
+      const client = mcpClients.get(targetServer);
+      if (!client)
+          throw new Error("Server not found");
+      const result = await client.listTools();
+      allTools.push(
+        ...result.tools.map((t) => formatTool(t, targetServer, true)),
       );
     }
+    
     return { data: allTools, isToolList: true };
   } else if (toolName === "get_tree") {
     const depth = args?.depth ? parseInt(args.depth) : 3;
@@ -157,13 +152,11 @@ export async function handleInternalTool(toolName: string, args: any) {
       relativeRoot === "." ? `Project Root` : `${relativeRoot}/`;
     resultData = `${header}\n` + (await generateTree(targetPath, 0, depth));
   } else if (toolName === "git_diff") {
-    // 🔥 修改：使用 git diff HEAD 以同时显示暂存和未暂存的变更
     const excludeArgs = getGitExcludeArgs();
     try {
       const { stdout } = await execAsync(`git diff HEAD -- . ${excludeArgs}`, { cwd: PROJECT_ROOT });
       resultData = stdout || "No changes detected.";
     } catch (e) {
-      // 兼容空仓库 (无 HEAD)
       const { stdout } = await execAsync(`git diff -- . ${excludeArgs}`, { cwd: PROJECT_ROOT });
       resultData = stdout || "No changes detected (No HEAD).";
     }

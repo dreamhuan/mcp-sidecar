@@ -35,7 +35,14 @@ export function useMcpEngine(
       if (json.success) {
         // 更新 Server 列表 (Side Effect)
         if (json.isToolList && Array.isArray(json.data)) {
-          const newServers = json.data.map((t: any) => t.server);
+          let newServers: string[] = [];
+          // 🔥 兼容处理：data 可能是 Server 名字数组 (string[]) 或 Tool 对象数组 ({server: string})
+          if (json.data.length > 0 && typeof json.data[0] === 'string') {
+            newServers = json.data;
+          } else {
+            newServers = json.data.map((t: any) => t.server);
+          }
+          
           setAvailableServers((prev) =>
             Array.from(new Set([...prev, ...newServers])).sort(),
           );
@@ -54,8 +61,12 @@ export function useMcpEngine(
         setResultPreview(`❌ EXECUTION FAILED:\n${json.error}`);
       }
     } catch (e: any) {
-      showToast("Connection Failed", "Please check local service", "error");
-    } finally {
+      console.error("❌ Execute Command Error:", e);
+      const errorMsg = e.message || "Unknown error occurred";
+      showToast("Execution Error", errorMsg, "error");
+      setResultPreview(`❌ CLIENT ERROR:\n${errorMsg}\n\nCheck console for details.`);
+    }
+ finally {
       setLoading(false);
     }
   };
@@ -102,6 +113,7 @@ export function useMcpEngine(
         showToast("Batch Complete", "Results ready (Copy failed)", "success");
       }
     } catch (e: any) {
+      console.error("❌ Batch Execution Error:", e);
       showToast("Batch Error", e.message, "error");
     } finally {
       setLoading(false);
@@ -120,8 +132,13 @@ export function useMcpEngine(
       const protocolPrompt =
         prompts.find((p) => p.id === "init-protocol")?.content ||
         "Protocol not found.";
+      
       const [listRes, treeRes] = await Promise.all([
-        invokeAPI({ serverName: "internal", toolName: "list" }),
+        invokeAPI({
+          serverName: "internal",
+          toolName: "list",
+          args: {},
+        }),
         invokeAPI({
           serverName: "internal",
           toolName: "get_tree",
@@ -131,14 +148,13 @@ export function useMcpEngine(
 
       let toolsSection = "";
       if (listRes.success && Array.isArray(listRes.data)) {
+        const servers = listRes.data as string[];
         toolsSection =
-          "## Available Tools\n" +
-          listRes.data
-            .map(
-              (t: any) => `- \`mcp:${t.server}:${t.name}\`: ${t.description}`,
-            )
-            .join("\n");
+          "## Available Servers\n" +
+          servers.map((s) => `- \`mcp:${s}\``).join("\n") +
+          "\n\n> **Tip**: To see tools for a specific server, use `mcp:internal:list({\"server\": \"fs\"})` (replace \"fs\" with the server name).";
       }
+
       const treeSection =
         "## Project Structure\n```\n" + treeRes.data + "\n```";
 
@@ -156,9 +172,10 @@ export function useMcpEngine(
       ].join("\n");
 
       await navigator.clipboard.writeText(fullContext);
-      showToast("Context Ready!", "Protocol, Tools & Tree copied.", "success");
+      showToast("Context Ready!", "Protocol, Servers & Tree copied.", "success");
       setResultPreview(fullContext);
     } catch (e: any) {
+      console.error("❌ Context Generation Error:", e);
       showToast("Init Failed", e.message, "error");
     } finally {
       setLoading(false);
@@ -225,6 +242,7 @@ export function useMcpEngine(
               "```",
             ].join("\n");
           } catch (e) {
+            console.error(`❌ Review File Error (${filePath}):`, e);
             return `\n=== FILE: ${filePath} ===\n(Error info)`;
           }
         }),
@@ -242,6 +260,7 @@ export function useMcpEngine(
       showToast("Ready for Review!", "Diffs & Content copied.", "success");
       setResultPreview(fullContext);
     } catch (e: any) {
+      console.error("❌ Review Generation Error:", e);
       showToast("Review Init Failed", e.message, "error");
     } finally {
       setLoading(false);

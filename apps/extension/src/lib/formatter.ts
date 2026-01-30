@@ -9,7 +9,7 @@ export function formatToolList(data: any[]): string {
   });
 
   const lines: string[] = [];
-  const isDetailed = data.length > 0 && "inputSchema" in data[0];
+  const isDetailed = data.length > 0 && typeof data[0] === 'object' && "inputSchema" in data[0];
 
   lines.push(
     isDetailed
@@ -24,7 +24,7 @@ export function formatToolList(data: any[]): string {
     tools.forEach((t: any) => {
       lines.push(`  ├─ 🛠️  ${t.name}`);
       if (t.description)
-        lines.push(`  │   Desc: ${t.description.replace(/\n/g, " ")}`);
+        lines.push(`  │    Desc: ${t.description.replace(/\n/g, " ")}`);
 
       if (t.inputSchema) {
         const props = t.inputSchema?.properties || {};
@@ -32,7 +32,7 @@ export function formatToolList(data: any[]): string {
         const required = new Set(t.inputSchema?.required || []);
 
         if (propKeys.length > 0) {
-          lines.push(`  │   Args:`);
+          lines.push(`  │    Args:`);
           propKeys.forEach((key) => {
             const prop = props[key];
             let argStr = `  │      └─ ${key}`;
@@ -58,13 +58,31 @@ export function formatCommandResult(
 ): string {
   let contentStr = "";
 
-  // 1. Tool List
-  if (Array.isArray(data) && data.length > 0 && "server" in data[0]) {
+  // 🔥 修复 1：优先处理简单的 Server 列表 (字符串数组)
+  // 防止进入后续逻辑导致 'in' operator 报错
+  if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'string') {
+     return "📦 AVAILABLE SERVERS\n" + data.map((s: string) => `- mcp:${s}`).join("\n");
+  }
+
+  // 1. Tool List (必须确保 item 是对象)
+  if (
+    Array.isArray(data) && 
+    data.length > 0 && 
+    typeof data[0] === 'object' && 
+    data[0] !== null &&
+    "server" in data[0]
+  ) {
     return formatToolList(data);
   }
 
   // 2. Directory List (ls)
-  if (Array.isArray(data) && data.length > 0 && "isDirectory" in data[0]) {
+  if (
+    Array.isArray(data) && 
+    data.length > 0 && 
+    typeof data[0] === 'object' && 
+    data[0] !== null &&
+    "isDirectory" in data[0]
+  ) {
     const dirs = data.filter((item: any) => item.isDirectory);
     const files = data.filter((item: any) => !item.isDirectory);
     contentStr = [
@@ -77,7 +95,7 @@ export function formatCommandResult(
   }
 
   // 3. Object (JSON)
-  if (typeof data === "object") {
+  if (typeof data === "object" && data !== null) {
     return JSON.stringify(data, null, 2);
   }
 
