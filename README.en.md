@@ -31,30 +31,14 @@ pnpm install
 
 ### 2. Configuration
 
-Modify the `.env` file in the root directory:
+Copy the env file and the mcp config file first
 
-```ini
-# Backend Service Port
-PORT=8080
-
-# Your target project root directory (Absolute Path)
-PROJECT_ROOT=/absolute/path/to/target-project
-
-# Frontend API URL
-VITE_API_URL=http://localhost:8080
-
+```bash
+cp .env.sample .env
+cp mcp.config.sample.json mcp.config.json
 ```
 
-Modify `mcp.config.json` (MCP Service Configuration):
-
-```json
-{
-  "fs": {
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-filesystem", "${PROJECT_ROOT}"]
-  }
-}
-```
+After copying, modify the `PROJECT_ROOT` in the `.env` file
 
 ### 3. One-Click Run
 

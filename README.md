@@ -1,4 +1,5 @@
 # MCP Sidecar
+
 [English](./README.en.md)
 
 > 让网页版 AI 对话框（DeepSeek, ChatGPT, Gemini）拥有本地 Agent 能力。
@@ -34,30 +35,14 @@ pnpm install
 
 ### 2. 项目配置
 
-修改根目录的 `.env` 文件：
+先复制 env 文件和 mcp config 文件
 
-```ini
-# 后端服务端口
-PORT=8080
-
-# 你的目标项目根目录（绝对路径）
-PROJECT_ROOT=/absolute/path/to/target-project
-
-# 前端 API 地址
-VITE_API_URL=http://localhost:8080
-
+```bash
+cp .env.sample .env
+cp mcp.config.sample.json mcp.config.json
 ```
 
-修改 `mcp.config.json` (配置 MCP 服务)：
-
-```json
-{
-  "fs": {
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-filesystem", "${PROJECT_ROOT}"]
-  }
-}
-```
+复制完毕之后修改 `.env` 的 `PROJECT_ROOT`
 
 ### 3. 一键运行
 
