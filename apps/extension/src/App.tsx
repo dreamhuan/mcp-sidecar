@@ -181,6 +181,7 @@ function App() {
                 progress={engine.executionProgress}
                 failedIndex={engine.failedIndex}
                 onConfirm={engine.executeBatch}
+                onRemove={engine.removeCommand} // 🔥 Pass the handler
                 onCancel={() => {
                   engine.setPendingCommands([]);
                   engine.setFailedIndex(null);

@@ -5,6 +5,7 @@ import {
   Check,
   Loader2,
   XCircle,
+  Trash2,
 } from "lucide-react";
 import { ParsedCommand } from "../lib/command-parser";
 import { cn } from "../lib/utils";
@@ -13,18 +14,20 @@ interface ExecutionPlanProps {
   commands: ParsedCommand[];
   onConfirm: () => void;
   onCancel: () => void;
+  onRemove: (index: number) => void;
   isExecuting: boolean;
   progress: number; // 当前执行到第几个
-  failedIndex: number | null; // 🔥 新增：标记出错的索引
+  failedIndex: number | null; // 标记出错的索引
 }
 
 export function ExecutionPlan({
   commands,
   onConfirm,
   onCancel,
+  onRemove,
   isExecuting,
   progress,
-  failedIndex, // 🔥 解构
+  failedIndex,
 }: ExecutionPlanProps) {
   // 区分读取和写入，给写入操作加警告色
   const getIcon = (cmd: ParsedCommand) => {
@@ -89,17 +92,14 @@ export function ExecutionPlan({
             <div
               key={idx}
               className={cn(
-                "flex items-start gap-3 p-3 rounded-lg border text-[13px] transition-all",
+                "flex items-start gap-3 p-3 rounded-lg border text-[13px] transition-all group",
                 isCurrent ? "bg-blue-50 border-blue-200" : "",
-                isFailed ? "bg-red-50 border-red-200 ring-1 ring-red-200" : "", // 🔥 错误红框
+                isFailed ? "bg-red-50 border-red-200 ring-1 ring-red-200" : "",
                 !isCurrent && !isFailed ? "bg-white border-slate-100" : "",
                 !cmd.isValid && "bg-red-50 border-red-100",
               )}
             >
-              <div className="mt-0.5 shrink-0">
-                {/* 始终调用 getStatusIcon 来动态显示状态 */}
-                {getStatusIcon(idx)}
-              </div>
+              <div className="mt-0.5 shrink-0">{getStatusIcon(idx)}</div>
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -116,7 +116,6 @@ export function ExecutionPlan({
                   </span>
                 </div>
 
-                {/* 参数预览 */}
                 <div className="mt-1 font-mono text-[11px] text-slate-500 break-all leading-relaxed opacity-80">
                   {JSON.stringify(cmd.args).slice(0, 100)}
                   {JSON.stringify(cmd.args).length > 100 && "..."}
@@ -128,6 +127,17 @@ export function ExecutionPlan({
                   </div>
                 )}
               </div>
+
+              {/* 🔥 Delete Button */}
+              {!isExecuting && (
+                <button
+                  onClick={() => onRemove(idx)}
+                  className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all"
+                  title="Remove command"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </div>
           );
         })}
@@ -136,14 +146,12 @@ export function ExecutionPlan({
       <div className="p-3 bg-white border-t border-slate-100 flex gap-2">
         <button
           onClick={onCancel}
-          // 只有正在执行且没出错时才禁用取消（防止执行一半卡住）
           disabled={isExecuting && failedIndex === null}
           className="flex-1 py-2 rounded-xl text-[13px] font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
         >
           {failedIndex !== null ? "Close" : "Cancel"}
         </button>
 
-        {/* 如果出错了，隐藏 Run 按钮，强制用户先 Close/Cancel */}
         {failedIndex === null && (
           <button
             onClick={onConfirm}
@@ -151,7 +159,7 @@ export function ExecutionPlan({
             className={cn(
               "flex-[2] py-2 rounded-xl text-[13px] font-bold text-white shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100",
               commands.some((c) => c.tool.includes("write"))
-                ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600" // 写入操作用橙色警示
+                ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600"
                 : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700",
             )}
           >

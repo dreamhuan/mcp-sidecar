@@ -15,6 +15,16 @@ export function useMcpEngine(
   const [executionProgress, setExecutionProgress] = useState(0);
   const [failedIndex, setFailedIndex] = useState<number | null>(null);
 
+  // --- Helper: 移除单条指令 ---
+  const removeCommand = (index: number) => {
+    setPendingCommands((prev) => prev.filter((_, i) => i !== index));
+    // 如果删除了指令，可能需要重置错误状态，防止索引错位导致的问题
+    if (failedIndex !== null) {
+        setFailedIndex(null);
+        setExecutionProgress(0);
+    }
+  };
+
   // --- Core: 单条执行 ---
   const executeCommand = async (
     serverName: string | null,
@@ -275,6 +285,7 @@ export function useMcpEngine(
     availableServers,
     pendingCommands,
     setPendingCommands,
+    removeCommand, // 🔥 Export new function
     executionProgress,
     setExecutionProgress,
     failedIndex,
