@@ -11,6 +11,9 @@ const getGitExcludeArgs = () => {
   return GIT_IGNORE_LIST.map((file) => ` ":(exclude)${file}"`).join("");
 };
 
+// 辅助：去除 ANSI 颜色代码
+const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+
 // 🔥 定义内部工具集
 const internalTools = [
   {
@@ -69,6 +72,20 @@ const internalTools = [
           description: "Relative path from project root",
         },
       },
+    },
+  },
+  {
+    name: "execute",
+    description: "Execute a shell command in the project root.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "The shell command to execute (e.g. 'npm install')",
+        },
+      },
+      required: ["command"],
     },
   },
   {
@@ -151,6 +168,24 @@ export async function handleInternalTool(toolName: string, args: any) {
     const header =
       relativeRoot === "." ? `Project Root` : `${relativeRoot}/`;
     resultData = `${header}\n` + (await generateTree(targetPath, 0, depth));
+  } else if (toolName === "execute") {
+    const command = args?.command;
+    if (!command) throw new Error("Command is required");
+    try {
+      const { stdout, stderr } = await execAsync(command, { cwd: PROJECT_ROOT });
+      resultData = stripAnsi(stdout);
+      if (stderr) {
+        resultData += `\n[stderr]:\n${stripAnsi(stderr)}`;
+      }
+      if (!resultData.trim()) {
+        resultData = "Command executed successfully (no output).";
+      }
+    } catch (e: any) {
+      // execAsync throws on non-zero exit code
+      resultData = `Command failed:\n${e.message}`;
+      if (e.stdout) resultData += `\n[stdout]:\n${stripAnsi(e.stdout)}`;
+      if (e.stderr) resultData += `\n[stderr]:\n${stripAnsi(e.stderr)}`;
+    }
   } else if (toolName === "git_diff") {
     const excludeArgs = getGitExcludeArgs();
     try {
