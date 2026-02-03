@@ -1,5 +1,5 @@
 import { useState, useImperativeHandle, type Ref } from "react";
-import { Wand2, Play, Loader2 } from "lucide-react";
+import { ClipboardPaste, Play, Loader2 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { ToastType } from "../types";
 
@@ -77,14 +77,14 @@ export function CommandBar({
         onSubmit={handleSubmit}
         className="relative flex items-center gap-2 bg-white p-1.5 rounded-[14px] shadow-sm border border-slate-100"
       >
-        {/* Magic Button (Now reads clipboard) */}
+        {/* Paste Button */}
         <button
           type="button"
           onClick={handleMagicGrab}
-          className="p-2 rounded-[10px] bg-gradient-to-br from-indigo-50 to-purple-50 text-indigo-600 hover:from-indigo-100 hover:to-purple-100 hover:scale-105 active:scale-95 transition-all border border-indigo-100/50"
+          className="p-2 rounded-[10px] bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600 hover:scale-105 active:scale-95 transition-all border border-slate-200 hover:border-blue-200"
           title="Paste from Clipboard"
         >
-          <Wand2 className="w-4 h-4" />
+          <ClipboardPaste className="w-4 h-4" />
         </button>
 
         {/* Input */}

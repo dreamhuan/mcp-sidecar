@@ -1,4 +1,4 @@
-import { Play } from "lucide-react"; // 🔥 改为引入 Play
+import { Play } from "lucide-react"; 
 import { cn } from "../lib/utils";
 import { ActionItem } from "../types";
 
@@ -13,9 +13,7 @@ export function QuickActions({ actions, onRun, loading }: QuickActionsProps) {
 
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="px-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider select-none">
-        Quick Actions
-      </h3>
+      {/* Inner Header Removed */}
 
       <div className="flex flex-col gap-2">
         {actions.map((action) => (

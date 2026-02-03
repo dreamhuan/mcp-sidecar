@@ -4,6 +4,10 @@ import {
   BookTemplate,
   CheckCircle2,
   AlertCircle,
+  LayoutGrid,
+  FolderOpen,
+  PlaySquare,
+  FileText,
 } from "lucide-react";
 import * as Toast from "@radix-ui/react-toast";
 import { cn } from "./lib/utils";
@@ -16,6 +20,7 @@ import { QuickActions } from "./components/QuickActions";
 import { CommandBar, type CommandBarRef } from "./components/CommandBar";
 import { ServerShortcuts } from "./components/ServerShortcuts";
 import { ExecutionPlan } from "./components/ExecutionPlan";
+import { CollapsibleSection } from "./components/CollapsibleSection";
 
 // Logic & Types
 import { ActionItem, ToastType } from "./types";
@@ -104,7 +109,10 @@ function App() {
     if (act.id === "project-tree") {
       // 从 Ref 获取当前浏览的路径
       const currentPath = searchRef.current?.getValue() || ".";
-      const args = { root: currentPath, depth: 3 };
+      // 如果是搜索模式，getValue 返回的是 query，这里做一个简单的判断或者默认为根目录
+      const safePath = currentPath.startsWith(".") || currentPath.includes("/") ? currentPath : ".";
+      
+      const args = { root: safePath, depth: 3 };
       const commandStr = `mcp:internal:get_tree(${JSON.stringify(args)})`;
 
       commandBarRef.current?.setValue(commandStr);
@@ -112,7 +120,7 @@ function App() {
         "internal",
         "get_tree",
         args,
-        `Current Project Structure (${currentPath}):\n\n`,
+        `Current Project Structure (${safePath}):\n\n`,
       );
       return;
     }
@@ -164,80 +172,93 @@ function App() {
           </button>
         </header>
 
-        {/* Command Section */}
+        {/* Command Section (Always Visible) */}
         <section className="animate-in fade-in slide-in-from-top-4 duration-500 flex flex-col gap-0">
-          <CommandBar
-            ref={commandBarRef}
-            onExecute={handleCommandExecute}
-            loading={engine.loading}
-            showToast={showToast}
-          />
-
-          <div className="mt-3 px-0.5">
-            {engine.pendingCommands.length > 0 ? (
-              <ExecutionPlan
-                commands={engine.pendingCommands}
-                isExecuting={engine.loading}
-                progress={engine.executionProgress}
-                failedIndex={engine.failedIndex}
-                onConfirm={engine.executeBatch}
-                onRemove={engine.removeCommand} // 🔥 Pass the handler
-                onCancel={() => {
-                  engine.setPendingCommands([]);
-                  engine.setFailedIndex(null);
-                  engine.setExecutionProgress(0);
-                }}
-              />
-            ) : (
-              <ServerShortcuts
-                servers={engine.availableServers}
-                onSelect={handleCommandExecute}
+            <CommandBar
+                ref={commandBarRef}
+                onExecute={handleCommandExecute}
                 loading={engine.loading}
-              />
-            )}
-          </div>
+                showToast={showToast}
+            />
+
+            <div className="mt-3 px-0.5">
+                {engine.pendingCommands.length > 0 ? (
+                <ExecutionPlan
+                    commands={engine.pendingCommands}
+                    isExecuting={engine.loading}
+                    progress={engine.executionProgress}
+                    failedIndex={engine.failedIndex}
+                    onConfirm={engine.executeBatch}
+                    onRemove={engine.removeCommand}
+                    onCancel={() => {
+                        engine.setPendingCommands([]);
+                        engine.setFailedIndex(null);
+                        engine.setExecutionProgress(0);
+                    }}
+                />
+                ) : (
+                <ServerShortcuts
+                    servers={engine.availableServers}
+                    onSelect={handleCommandExecute}
+                    loading={engine.loading}
+                />
+                )}
+            </div>
         </section>
 
         {/* Quick Actions */}
-        <QuickActions
-          actions={ACTIONS}
-          loading={engine.loading}
-          onRun={handleActionClick}
-        />
+        <CollapsibleSection 
+            title="Quick Actions" 
+            defaultOpen={true} 
+            icon={<LayoutGrid className="w-4 h-4" />}
+        >
+            <QuickActions
+                actions={ACTIONS}
+                loading={engine.loading}
+                onRun={handleActionClick}
+            />
+        </CollapsibleSection>
 
         {/* File Explorer */}
-        <section>
-          <h2 className="text-[13px] font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1">
-            Project Explorer
-          </h2>
-          {/* 🔥 绑定 ref */}
-          <FileSearch
-            ref={searchRef}
-            loading={engine.loading}
-            onSelect={(path) => {
-              const isDir = path.endsWith("/") || path === "." || path === "..";
-              const tool = isDir ? "list_directory" : "read_file";
-              const args = { path };
-              const commandStr = `mcp:internal:${tool}(${JSON.stringify(args)})`;
-              commandBarRef.current?.setValue(commandStr);
-              engine.executeCommand(
-                "internal",
-                tool,
-                args,
-                isDir
-                  ? `Structure of directory ${path}:\n\n`
-                  : `Content of file ${path}:\n\n`,
-              );
-            }}
-          />
-        </section>
+        <CollapsibleSection 
+            title="Project Explorer" 
+            defaultOpen={true} 
+            icon={<FolderOpen className="w-4 h-4" />}
+        >
+            {/* 🔥 绑定 ref */}
+            <FileSearch
+                ref={searchRef}
+                loading={engine.loading}
+                onSelect={(path) => {
+                const isDir = path.endsWith("/") || path === "." || path === "..";
+                const tool = isDir ? "list_directory" : "read_file";
+                const args = { path };
+                const commandStr = `mcp:internal:${tool}(${JSON.stringify(args)})`;
+                commandBarRef.current?.setValue(commandStr);
+                engine.executeCommand(
+                    "internal",
+                    tool,
+                    args,
+                    isDir
+                    ? `Structure of directory ${path}:\n\n`
+                    : `Content of file ${path}:\n\n`,
+                );
+                }}
+            />
+        </CollapsibleSection>
 
         {/* Results */}
-        <ResultPreview
-          content={engine.resultPreview}
-          prompts={prompts}
-          showToast={showToast}
-        />
+        <CollapsibleSection 
+            title="Results Preview" 
+            defaultOpen={true} 
+            icon={<FileText className="w-4 h-4" />}
+        >
+            <ResultPreview
+                content={engine.resultPreview}
+                prompts={prompts}
+                showToast={showToast}
+            />
+        </CollapsibleSection>
 
         {/* Prompt Manager Modal */}
         <PromptManager

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, BookTemplate, ChevronDown } from "lucide-react";
+import { Copy, BookTemplate, ChevronDown, TerminalSquare } from "lucide-react";
 import { cn } from "../lib/utils";
 import { PromptTemplate, ToastType } from "../types";
 
@@ -16,7 +16,18 @@ export function ResultPreview({
 }: ResultPreviewProps) {
   const [showPromptMenu, setShowPromptMenu] = useState(false);
 
-  if (!content) return null;
+  // 🔥 Empty State
+  if (!content) {
+      return (
+          <div className="flex flex-col items-center justify-center py-12 px-4 border border-dashed border-slate-200 rounded-[16px] bg-slate-50/50">
+              <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mb-3">
+                  <TerminalSquare className="w-5 h-5 text-slate-400" />
+              </div>
+              <p className="text-[13px] font-medium text-slate-500">No results yet</p>
+              <p className="text-[11px] text-slate-400 mt-1">Execute a command to see output</p>
+          </div>
+      );
+  }
 
   const copyToClipboard = async (text: string, template?: PromptTemplate) => {
     let final = text;
@@ -36,11 +47,8 @@ export function ResultPreview({
 
   return (
     <section className="animate-in fade-in slide-in-from-bottom-6 duration-500 ease-out pb-6">
-      <div className="flex items-center justify-between px-1 mb-2">
-        <h2 className="text-[13px] font-semibold text-slate-400 uppercase tracking-wider">
-          Preview
-        </h2>
-
+      {/* Inner Header Removed */}
+      <div className="flex items-center justify-end px-1 mb-2">
         <div className="flex items-center gap-2 relative">
           <button
             onClick={() => copyToClipboard(content)}
