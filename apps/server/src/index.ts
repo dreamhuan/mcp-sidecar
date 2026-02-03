@@ -134,6 +134,6 @@ app.post("/api/invoke", async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`🚀 Sidecar Server running on port ${PORT}`);
+  console.log(`🚀 Sidecar Server running on http://localhost:${PORT}`);
   await connectMcp();
 });
