@@ -2,7 +2,7 @@ import path from "path";
 import fs from "fs/promises";
 import { PROJECT_ROOT, GIT_IGNORE_LIST } from "../config";
 import { execAsync } from "../utils/exec";
-import { generateTree, listFilesWithTypes } from "../utils/fs";
+import { generateTree, listFilesWithTypes, listAllFiles } from "../utils/fs";
 import { mcpClients } from "./mcp";
 
 // 辅助：生成 Git Exclude 参数
@@ -60,6 +60,11 @@ const internalTools = [
         },
       },
     },
+  },
+  {
+    name: "list_all_files",
+    description: "Recursively list ALL files in the project (flattened).",
+    inputSchema: {},
   },
   {
     name: "read_file",
@@ -124,15 +129,12 @@ export async function handleInternalTool(toolName: string, args: any) {
   if (toolName === "list") {
     const targetServer = args?.server;
     
-    // 🔥 优化：如果没有指定 server，默认只返回 Server 名称列表
     if (!targetServer) {
        const servers = Array.from(mcpClients.keys()).sort();
-       // 确保 internal 在列表中
        if (!servers.includes("internal")) servers.unshift("internal");
        return { data: servers, isStructured: true, isToolList: true };
     }
 
-    // 如果指定了 Server，则查询该 Server 的具体工具
     const allTools: any[] = [];
 
     const formatTool = (t: any, sName: string, detailed: boolean) => ({
@@ -168,6 +170,10 @@ export async function handleInternalTool(toolName: string, args: any) {
     const header =
       relativeRoot === "." ? `Project Root` : `${relativeRoot}/`;
     resultData = `${header}\n` + (await generateTree(targetPath, 0, depth));
+  } else if (toolName === "list_all_files") {
+     // 🔥 New Tool Implementation
+     const files = await listAllFiles(PROJECT_ROOT);
+     return { data: files, isStructured: true };
   } else if (toolName === "execute") {
     const command = args?.command;
     if (!command) throw new Error("Command is required");
@@ -181,7 +187,6 @@ export async function handleInternalTool(toolName: string, args: any) {
         resultData = "Command executed successfully (no output).";
       }
     } catch (e: any) {
-      // execAsync throws on non-zero exit code
       resultData = `Command failed:\n${e.message}`;
       if (e.stdout) resultData += `\n[stdout]:\n${stripAnsi(e.stdout)}`;
       if (e.stderr) resultData += `\n[stderr]:\n${stripAnsi(e.stderr)}`;

@@ -48,7 +48,28 @@ export async function generateTree(
   }
 }
 
-// 文件列表逻辑
+// 递归扫描所有文件 (扁平列表)
+export async function listAllFiles(dir: string, baseDir: string = dir): Promise<string[]> {
+  let results: string[] = [];
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (["node_modules", ".git", "dist", ".DS_Store", "coverage", "build", ".next", ".pnpm-store"].includes(entry.name)) continue;
+      
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        results = results.concat(await listAllFiles(fullPath, baseDir));
+      } else {
+        results.push(path.relative(baseDir, fullPath));
+      }
+    }
+  } catch (e) {
+    // ignore access errors
+  }
+  return results;
+}
+
+// 文件列表逻辑 (单层)
 export async function listFilesWithTypes(dirPath: string) {
   // ✅ 安全性修改：强制使用 resolve 基于 PROJECT_ROOT，防止访问 /etc/passwd 等绝对路径
   const fullPath = path.resolve(PROJECT_ROOT, dirPath);
